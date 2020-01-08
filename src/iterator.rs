@@ -26,7 +26,7 @@ impl Iterator for TreeIter {
 }
 
 //consume a split point return a iterator
-impl IntoIterator for SplitPoint {
+impl<'a> IntoIterator for SplitPoint {
     type Item = Node;
     type IntoIter = iter::Chain<NodeIterator, NodeIterator>;
 
@@ -85,6 +85,78 @@ impl Iterator for NodeIterator {
         }
     }
 }
+/*
+impl<'a> IntoIterator for &'a mut SplitPoint {
+    type Item = &'a mut Node;
+    type IntoIter = iter::Chain<MutNodeIterator<'a>, MutNodeIterator<'a>>;
+
+    fn into_iter(self) -> Chain<MutNodeIterator<'a>, MutNodeIterator<'a>> {
+        (&mut self.zero).into_iter().chain((&mut self.one).into_iter())
+    }
+}
+
+
+impl<'a> IntoIterator for &'a mut Node {
+    type Item = &'a mut Node;
+    type IntoIter = MutNodeIterator<'a>;
+    
+    fn into_iter(self) -> MutNodeIterator<'a> {
+        MutNodeIterator {
+            node: self,
+            iter: None,
+            index: 0,
+            is_finise: false,
+        }
+    }
+}
+
+pub struct MutNodeIterator<'a> {
+    node: &'a mut Node,
+    iter: Option<Box<iter::Chain<MutNodeIterator<'a>, MutNodeIterator<'a>>>>,
+    index: usize,
+    is_finise: bool,
+}
+
+impl<'a> Iterator for MutNodeIterator<'a> {
+    type Item = &'a mut Node;
+
+    fn next(&mut self) -> Option<&'a mut Node> {
+        if self.is_finise {
+            return None
+        }
+        if let Some(iter) = &mut self.iter {
+            let val = iter.nth(self.index);
+            self.index += 1;
+            val
+        }
+        else {
+            self.iter = match self.node {
+                Node::Leaf(_, _, _) => {
+                    self.is_finise = true;
+                    return Some(self.clone().node)
+                }
+                Node::Internal(_, split, _) => {
+                    Some(Box::new((&mut split.zero).into_iter().chain((&mut split.one).into_iter())))
+                } 
+            };
+        let val = self.iter.unwrap().nth(self.index);
+        self.index += 1;
+        val 
+        }
+    }
+}
+
+
+impl<'a> std::clone::Clone for MutNodeIterator<'a> {
+    fn clone(&self) -> Self {
+        MutNodeIterator {
+            node: self.node,
+            iter: self.iter.clone(),
+            index: self.index,
+            is_finise: self.is_finise,
+        }
+    }
+}*/
 
 #[cfg(test)]
 mod test {
@@ -94,13 +166,14 @@ mod test {
     fn internal_split_point_iter() {
         let mut s = SplitPoint {
             one: Node::Leaf(4, 'a', vec!(true)),
-            zero: Node::Internal(3, Rc::new(
-                SplitPoint {
-                    one: Node::Leaf(2, 'b', vec!(false, true)),
-                    zero: Node::Leaf(1, 'c', vec!(false, false))
-                }
+            zero: Node::Internal(3,
+                Box::new(
+                    SplitPoint {
+                        one: Node::Leaf(2, 'b', vec!(false, true)),
+                        zero: Node::Leaf(1, 'c', vec!(false, false))
+                    }
                 ),
-                vec!(false)
+                vec!(false),
             )         
         }.into_iter();
 

@@ -1,5 +1,6 @@
 use super::*;
 use failure;
+use std::fmt;
 
 #[derive(Clone, Debug)]
 pub struct TreeLeaf {
@@ -32,7 +33,7 @@ impl From<String> for Tree {
                             path
                         }
                     }
-                    _ => {unreachable!()}
+                    _ => {unreachable!("bug")}
                 }
             }).collect()
         }
@@ -72,6 +73,12 @@ impl Tree {
                 tree_leaf.ch == ch
             })
         });
+        for thing in iter.clone() {
+            match thing {
+                Some(leaf) => {println!("{}", leaf)},
+                None => {println!("none")},
+            }
+        }
         let mut binary_char_list: Vec<Vec<bool>> = vec!();
         for leaf in iter {
             match leaf {
@@ -90,5 +97,34 @@ impl Tree {
                 stream,
             }
         )
+    }
+}
+
+impl fmt::Display for TreeLeaf {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} [{:?}]", self.ch, self.path)
+    }
+}
+
+impl fmt::Display for Tree {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result  {
+        for leaf in &self.leaf_list {
+            println!("{}", leaf);
+        }
+        write!(f, "")
+    }
+}
+
+mod test {
+    use super::*;
+
+    
+    #[test]
+    fn encode() {
+        let s = String::from("aaaabbc");
+        println!("{}", s);
+        let t: Tree = s.clone().into();
+        println!("{:?}", t);
+        t.clone().encode(s).unwrap();
     }
 }
