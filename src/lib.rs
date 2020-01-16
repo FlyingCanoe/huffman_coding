@@ -5,8 +5,6 @@ use bitvec::prelude::*;
 
 pub mod io;
 
-#[macro_use] extern crate failure;   
-
 
 
 #[derive(Debug, Clone, Eq, PartialEq)]
