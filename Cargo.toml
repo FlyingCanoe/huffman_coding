@@ -8,3 +8,5 @@ edition = "2018"
 
 [dependencies]
 failure = "0.1.6"
+itertools = "0.8.2"
+bitvec = "0.17.1"

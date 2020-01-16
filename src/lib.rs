@@ -1,281 +1,231 @@
-use std::iter::*;
-use std::iter;
-use std::cmp::Reverse;
-use std::collections::BinaryHeap;
-#[macro_use] extern crate failure;
+use std::collections::BTreeMap;
+use std::collections::binary_heap::BinaryHeap;
+use std::cmp::Ordering;
+use bitvec::prelude::*;
 
 pub mod io;
-mod iterator;
 
-#[derive(Debug, Clone)]
-pub struct SplitPoint {
-    //a one
-    one: Node,
-    // a zero
-    zero: Node,
+#[macro_use] extern crate failure;   
+
+
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+enum NodeKind {
+    Internal(Box<Node>, Box<Node>),
+    Leaf(char),
 }
 
-impl SplitPoint {
-    pub fn new(n1: Node, n2: Node) -> Self {
-        SplitPoint {
-            one: n1,
-            zero: n2,
-        }
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct Node {
+    frequency: usize,
+    kind: NodeKind,
+}
+
+impl Ord for Node {
+    fn cmp(&self, rhs: &Self) -> std::cmp::Ordering {
+        rhs.frequency.cmp(&self.frequency)
     }
 }
 
-fn add_char(node_list: &mut Vec<Node>, ch: char) {
-    for node in node_list.iter_mut() {
-
-        if node.char().unwrap() == ch {
-
-            match node {
-                Node::Leaf(num, ..) => {
-                    *num += 1;
-                    return 
-                }
-                Node::Internal(..) => {unreachable!()},
-            }
-        }
+impl PartialOrd for Node {
+    fn partial_cmp(&self, rhs: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(&rhs))
     }
-    //the char is not in the list if the return in the for loop is not triger
-    node_list.push(Node::Leaf(1, ch, vec!()));
 }
 
-impl From<String> for Node {
-    fn from(s: String) -> Self {
-        let mut char_list: Vec<Node> = vec!(); 
-        for ch in s.chars() {
-            add_char(&mut char_list, ch);
-            println!("node list (");
-            for node in char_list.clone() {
-                println!("{}", node)
-            }
-        }
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct HuffmanCodeMap(BTreeMap<char, BitVec>);
 
-        let mut heap: BinaryHeap<Node> = char_list.into_iter().collect();
+
+impl HuffmanCodeMap {
+    pub fn new(text: String) -> Self {
         
-        println!("{:?}", heap);
-        while let (Some(node1), Some(node2)) = (heap.pop(), heap.pop()) {
-            heap.push(Node::merge(node1, node2));
+        let mut char_list = BTreeMap::new();
+        for ch in text.chars() {
+            *char_list.entry(ch).or_insert(0) += 1;
+        }
+
+        let mut heap = BinaryHeap::new();
+        for counted_char in char_list {
+            heap.push(Node {
+                frequency: counted_char.1,
+                kind: NodeKind::Leaf(counted_char.0),
+            });
+        }
+        
+        while heap.len() > 1 { 
+            let left_chill = heap.pop().unwrap(); 
+            let right_chill = heap.pop().unwrap();
+            heap.push(Node::merge(left_chill, right_chill));
             if heap.len() == 1 {
                 break
             }
-            println!("node list merge in progress (");
-            for node in heap.clone() {
-                println!("{}", node)
+        }
+
+        let mut code = HuffmanCodeMap {0: BTreeMap::new()};
+    generate_codes(&heap.pop().unwrap(), BitVec::new(), &mut code);
+    
+    code
+    }
+    pub fn get_char_code(&self, ch: char) -> Result<BitVec, ()> {
+        let code_option = self.0.get(&ch).cloned();
+        match code_option {
+            Some(code) => Result::Ok(code),
+            None => Result::Err(()),
+            
+        }
+    }
+    
+    pub fn encode(&self, text: String) -> Result<BitVec, ()> {
+        let char_code_list = text
+            .chars()
+            .map(|ch| { self.get_char_code(ch) });
+
+        let mut output_stream = BitVec::new();
+        for vec in char_code_list {
+            output_stream.append(&mut vec?);
+        }
+        Result::Ok(output_stream)
+    }
+
+    fn try_get_char_by_code(&self, bitvec: &BitVec) -> Option<char> {
+        let resault = self.0.iter().find(|pair| {
+            pair.1 == bitvec 
+        });
+
+        match resault {
+            Some(tuple) => Some(*tuple.0),
+            None => None,
+        }
+    }
+
+    pub fn decode(&self, mut binary_stream: BitVec) -> String {
+        let mut str_chache = String::new();
+        let mut char_chache: BitVec = BitVec::new();
+        
+        while !binary_stream.is_empty() {
+            char_chache.push(*binary_stream.first().unwrap());
+            binary_stream.remove(0);
+            if let Some(ch) = self.try_get_char_by_code(&char_chache) {
+                str_chache.push(ch);
+                char_chache.clear();
             }
         }
+        str_chache
 
-        heap.pop().unwrap()
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum Node {
-    Leaf(usize, char, Vec<bool>),
-    Internal(usize, Box<SplitPoint>, Vec<bool>),
-}
+fn generate_codes(node: &Node, prefix: BitVec, out_codes: &mut HuffmanCodeMap) {
 
+    match node.kind {
+        NodeKind::Internal(ref left_child, ref right_child) => {
+            let mut left_prefix = prefix.clone();
+            left_prefix.push(false);
+            generate_codes(&left_child, left_prefix, out_codes);
+ 
+            let mut right_prefix = prefix;
+            right_prefix.push(true);
 
-
-impl Node { 
-    pub fn num(&self) -> usize {
-        match self {
-            Node::Leaf(num, _, _) => {*num},
-            Node::Internal(num, _, _) => {*num},
+            generate_codes(&right_child, right_prefix, out_codes);
         }
-    }
-
-    ///return the char of the node if it is a leaf node
-    pub fn char(&self) -> Option<char> {
-        match self {
-            Node::Leaf(_, ch, _) => {Some(*ch)},
-            Node::Internal(_, _, _) => {None}
+        NodeKind::Leaf(ch) => {
+            out_codes.0.insert(ch, prefix);
         }
-    }
-
-    pub fn append_to_path(&mut self, b: bool) {
-        match self {
-            Node::Internal(_, _, vec) => {vec.push(b);},
-            Node::Leaf(_, _, vec) => {vec.push(b);}
-        }
-        
     }
 }
 
 impl Node {
-    pub fn merge(mut self, mut other: Node) -> Node {
-        //if node 1 is biger
-        if self > other {
-            //add True to the node 1 path
-            self.append_to_path(true);
+    pub fn merge(node1: Node, node2: Node) -> Node {
+        let (bigger_node, smaler_node) = match node1.cmp(&node2) {
+            Ordering::Less => {(node2, node1)},
+            Ordering::Equal => (node1, node2),
+            Ordering::Greater => (node1, node2),
+        };
 
-            //ad False to the node 2 path
-            other.append_to_path(false);
-
-            let n: Node = Node::Internal(
-                self.num() + other.num(),
-                Box::new(
-                    SplitPoint {
-                        one: self,
-                        zero: other.clone(),
-                    }
-                ),
-                vec!(),
-            );
-            n
-        }
-        else {
-            other.append_to_path(true);
-            self.append_to_path(false);
-
-            Node::Internal(
-                self.num() + other.num(),
-                Box::new(
-                    SplitPoint {
-                        one: other,
-                        zero: self,
-                    }
-                ),
-                vec!()
-            )
+        Node {
+            frequency: bigger_node.frequency + smaler_node.frequency,
+            kind: NodeKind::Internal(Box::new(smaler_node), Box::new(bigger_node)),
         }
     }
 }
 
+
 mod test {
-    use super::*;
+    use bitvec::prelude::*;
+    use super::{Node, NodeKind, HuffmanCodeMap};
 
     #[test]
-    fn add_char_fn_test() {
-        let mut node_list: Vec<Node> = vec!();
-        add_char(&mut node_list, 'a');
-        add_char(&mut node_list, 'a');
-        add_char(&mut node_list, 'a');
-        add_char(&mut node_list, 'b');
-        add_char(&mut node_list, 'b');
-        add_char(&mut node_list, 'c');
+    fn name() {
+        let s = "abbccccdddddeeeeee";
+        let map = HuffmanCodeMap::new(String::from(s));
+        let code = map.encode(String::from(s));
+        let ss = map.decode(code.unwrap());
+        assert_eq!(s, ss);
 
-        assert_eq!(node_list, vec!(
-            Node::Leaf(
-                3,
-                'a',
-                vec!()
-            ),
-            Node::Leaf(
-                2,
-                'b',
-                vec!()
-            ),
-            Node::Leaf(
-                1,
-                'c',
-                vec!()
-            )
-        ))
+        
+
     }
 
-    #[test]
-    fn node_from_string() {
-        let s: String = String::from("aaaabbc");
-        let node = Node::from(s);
-
-        match node {
-            //there are more than one 3 type of char in s ('a' 'b' and 'c')
-            //so it should be a internal leaf
-            Node::Leaf(..) => {panic!()},
-
-            Node::Internal(_, split, _) => {
-                match &split.one {
-
-                    Node::Internal(..) => panic!(),
-
-                    Node::Leaf(num, ch, path) => {
-                        assert_eq!(*num, 4);
-                        assert_eq!(*ch, 'a');
-                        assert_eq!(*path, vec!(true));
-                    },
-                }
-                match &split.zero {
-                    Node::Leaf(..) => panic!(),
-
-                    Node::Internal(_, sub_split, _) => {
-                        match &sub_split.one {
-                            Node::Internal(..) => panic!(),
-                            Node::Leaf(num, ch, path) => {
-                                assert_eq!(*num, 2);
-                                assert_eq!(*ch, 'b');
-                                //assert_eq!(*path, vec!(false, true));
-                            }
-                        }
-
-                        match &sub_split.zero {
-                            Node::Internal(..) => panic!(),
-                            Node::Leaf(num, ch, path) => {
-                                assert_eq!(*num, 1);
-                                assert_eq!(*ch, 'c');
-                                assert_eq!(*path, vec!(false, false))
-                            }
-                        }
-                    },
-                }
-            }
-        }
-    }
-
+    /*
     #[test]
     fn partily_internal_merge_test() {
-        let n1 = Node::Internal(
-            3,
-            Box::new(
-                SplitPoint {
-                    zero: Node::Leaf(1, 'c', vec!(false)),
-                    one: Node::Leaf(2, 'b', vec!(true)),
-                }
+        let n1 = Node {
+            frequency: 3,
+            kind: NodeKind::Internal(
+                Box::new(
+                    Node {
+                        frequency: 1,
+                        kind: NodeKind::Leaf('c'),
+                    }
+                ),
+                Box::new(
+                    Node {
+                        frequency: 1,
+                        kind: NodeKind::Leaf('b'),
+                    }
+                )
             ),
-            vec!()
-        );
+        };
 
-        let n2 = Node::Leaf(5, 'a', vec!());
+        let n2 = Node {
+            frequency: 5,
+            kind: NodeKind::Leaf('a'),
+        };
 
         let n3 = Node::merge(n1, n2);
+        assert_eq!(n3.frequency, 8);
 
-        match n3 {
-            Node::Leaf(..) => {panic!()},
-            Node::Internal(num, split, _) => {
-                assert_eq!(num, 8);
+        match n3.kind {
+            NodeKind::Leaf(..) => {panic!()},
+            NodeKind::Internal(left_child, right_child) => {
+                assert_eq!(left_child.frequency, 3);
+                assert_eq!(right_child.frequency, 5);
 
-                match split.one {
-                    Node::Internal(..) => panic!(),
-                    Node::Leaf(num, ch, path) => {
-                        assert_eq!(num, 5);
+                match right_child.kind {
+                    NodeKind::Internal(..) => panic!(),
+                    NodeKind::Leaf(ch) => {
                         assert_eq!(ch, 'a');
-                        assert_eq!(path, vec!(true));
                     }
                 }
 
-                match split.zero {
-                    Node::Leaf(..) => panic!(),
-                    Node::Internal(num, sub_split, path) => {
-                        assert_eq!(num, 3);
-                        assert_eq!(path, vec!(false));
+                match left_child.kind {
+                    NodeKind::Leaf(..) => panic!(),
+                    NodeKind::Internal(left_child, right_child) => {
+                        assert_eq!(left_child.frequency, 1);
+                        assert_eq!(right_child.frequency, 2);
 
-                        match sub_split.one {
-                            Node::Internal(..) => panic!(),
-                            Node::Leaf(num, ch, path) => {
-                                assert_eq!(num, 2);
+                        match right_child.kind {
+                            NodeKind::Internal(..) => panic!(),
+                            NodeKind::Leaf(ch) => {
                                 assert_eq!(ch, 'b');
-                                assert_eq!(path, vec!(false, true));
                             }
                         }
 
-                        match sub_split.zero {
-                            Node::Internal(..) => panic!(),
-                            Node::Leaf(num, ch, path) => {
-                                assert_eq!(num, 1);
+                        match left_child.kind {
+                            NodeKind::Internal(..) => panic!(),
+                            NodeKind::Leaf(ch) => {
                                 assert_eq!(ch, 'c');
-                                assert_eq!(path, vec!(false, false))
                             }
                         }
                     } 
@@ -286,73 +236,37 @@ mod test {
 
     #[test]
     fn leaf_merge_test() {
-        let n1 = Node::Leaf(2, 'a', vec!());
-        let n2 = Node::Leaf(1, 'b', vec!());
+        let n1 = Node {
+            frequency: 2,
+            kind: NodeKind::Leaf('a'),
+        };
+
+        let n2 = Node {
+            frequency: 1,
+            kind: NodeKind::Leaf('b'),
+        };
 
         let n3 = Node::merge(n1, n2);
 
-        if let Node::Internal(num, node, _) = n3 {
-            assert_eq!(num, 3);
-            if let Node::Leaf(num_one, ch_one, path_one) = &node.one {
-                assert_eq!(*num_one, 2);
-                assert_eq!(*ch_one, 'a');
-                assert_eq!(*path_one, vec!(true))
-            }
-            else {panic!()}
+        assert_eq!(n3.frequency, 3);
 
-            if let Node::Leaf(num_zero, ch_zero, path_zero) = &node.zero {
-                assert_eq!(*num_zero, 1);
-                assert_eq!(*ch_zero, 'b');
-                assert_eq!(*path_zero, vec!(false))
-            }
-            else {panic!()}
-        };
-    }
-}
+        match n3.kind {
+            NodeKind::Leaf(..) => panic!(),
 
-mod node_eq {
-    use std::cmp::Ordering;
-    use super::*;
+            NodeKind::Internal(left_child, right_child) => {
+                assert_eq!(left_child.frequency, 1);
+                assert_eq!(right_child.frequency, 2);
 
-    impl PartialEq for Node {
-        fn eq(&self, other: &Node) -> bool {
-            self.num() == other.num()
-        }
-    }
+                match right_child.kind {
+                    NodeKind::Leaf(ch) => assert_eq!(ch, 'a'),
+                    NodeKind::Internal(..) => panic!(),
+                }
 
-    impl Eq for Node {}
-
-    impl Ord for Node {
-        fn cmp(&self, other: &Node) -> Ordering {
-            self.num().cmp(&other.num())
-        }
-    }
-
-    impl PartialOrd for Node {
-        fn partial_cmp(&self, other: &Node) -> Option<Ordering> {
-            self.num().partial_cmp(&other.num())
-        }
-    }
-}
-
-mod node_fmt {
-    use super::Node;
-    use std::fmt;
-
-    impl fmt::Display for Node {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            match self {
-                Node::Leaf(num, ch, _) => {writeln!(f, "'{}': {}", ch, num)}
-                Node::Internal(_, split, _) => {
-                    for leaf in split.clone().into_iter() {
-                        match leaf {
-                            Node::Leaf(num, ch, _) => {writeln!(f, "'{}': {}", ch, num)?;},
-                            Node::Internal(..) => {unreachable!()},
-                        }
-                    }
-                    write!(f, "")
+                match left_child.kind {
+                    NodeKind::Leaf(ch) => assert_eq!(ch, 'b'), 
+                    NodeKind::Internal(..) => panic!(),
                 }
             }
         }
-    }
+    }*/
 }
