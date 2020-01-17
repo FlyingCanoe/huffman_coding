@@ -32,7 +32,7 @@ impl PartialOrd for Node {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct HuffmanCodeMap(BTreeMap<char, BitVec>);
+pub struct HuffmanCodeMap(BTreeMap<char, BitVec<Lsb0, u8>>);
 
 
 impl HuffmanCodeMap {
@@ -65,7 +65,7 @@ impl HuffmanCodeMap {
     
     code
     }
-    pub fn get_char_code(&self, ch: char) -> Result<BitVec, ()> {
+    pub fn get_char_code(&self, ch: char) -> Result<BitVec<Lsb0, u8>, ()> {
         let code_option = self.0.get(&ch).cloned();
         match code_option {
             Some(code) => Result::Ok(code),
@@ -74,7 +74,7 @@ impl HuffmanCodeMap {
         }
     }
     
-    pub fn encode(&self, text: String) -> Result<BitVec, ()> {
+    pub fn encode(&self, text: String) -> Result<BitVec<Lsb0, u8>, ()> {
         let char_code_list = text
             .chars()
             .map(|ch| { self.get_char_code(ch) });
@@ -97,7 +97,7 @@ impl HuffmanCodeMap {
         }
     }
 
-    pub fn decode(&self, mut binary_stream: BitVec) -> String {
+    pub fn decode(&self, mut binary_stream: BitVec<Lsb0, u8>) -> String {
         let mut str_chache = String::new();
         let mut char_chache: BitVec = BitVec::new();
         
@@ -114,7 +114,7 @@ impl HuffmanCodeMap {
     }
 }
 
-fn generate_codes(node: &Node, prefix: BitVec, out_codes: &mut HuffmanCodeMap) {
+fn generate_codes(node: &Node, prefix: BitVec<Lsb0, u8>, out_codes: &mut HuffmanCodeMap) {
 
     match node.kind {
         NodeKind::Internal(ref left_child, ref right_child) => {
