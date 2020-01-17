@@ -32,7 +32,7 @@ impl PartialOrd for Node {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct HuffmanCodeMap(BTreeMap<char, BitVec>);
+pub struct HuffmanCodeMap(BTreeMap<char, BitVec<Lsb0, u8>>);
 
 
 impl HuffmanCodeMap {
@@ -65,7 +65,7 @@ impl HuffmanCodeMap {
     
     code
     }
-    pub fn get_char_code(&self, ch: char) -> Result<BitVec, ()> {
+    pub fn get_char_code(&self, ch: char) -> Result<BitVec<Lsb0, u8>, ()> {
         let code_option = self.0.get(&ch).cloned();
         match code_option {
             Some(code) => Result::Ok(code),
@@ -114,7 +114,7 @@ impl HuffmanCodeMap {
     }
 }
 
-fn generate_codes(node: &Node, prefix: BitVec, out_codes: &mut HuffmanCodeMap) {
+fn generate_codes(node: &Node, prefix: BitVec<Lsb0, u8>, out_codes: &mut HuffmanCodeMap) {
 
     match node.kind {
         NodeKind::Internal(ref left_child, ref right_child) => {
