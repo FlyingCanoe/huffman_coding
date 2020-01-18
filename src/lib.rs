@@ -100,7 +100,7 @@ impl HuffmanCodeMap {
     pub fn decode(&self, mut binary_stream: BitVec<Lsb0, u8>) -> String {
         let mut str_chache = String::new();
         let mut char_chache: BitVec = BitVec::new();
-        println!("t {}", binary_stream.clone());
+        
         binary_stream.reverse();
         while !binary_stream.is_empty() {
             char_chache.push(binary_stream.pop().unwrap());
