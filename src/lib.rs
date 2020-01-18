@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::collections::binary_heap::BinaryHeap;
 use std::cmp::Ordering;
+use serde::{Serialize, Deserialize};
 use bitvec::prelude::*;
 
 pub mod io;
@@ -31,7 +32,7 @@ impl PartialOrd for Node {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct HuffmanCodeMap(BTreeMap<char, BitVec<Lsb0, u8>>);
 
 
@@ -100,7 +101,7 @@ impl HuffmanCodeMap {
     pub fn decode(&self, mut binary_stream: BitVec<Lsb0, u8>) -> String {
         let mut str_chache = String::new();
         let mut char_chache: BitVec = BitVec::new();
-        
+
         binary_stream.reverse();
         while !binary_stream.is_empty() {
             char_chache.push(binary_stream.pop().unwrap());
