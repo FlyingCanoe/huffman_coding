@@ -8,4 +8,4 @@ edition = "2018"
 
 [dependencies]
 bitvec = {version = "0.17.1", features = ["serde"]}
-serde = {version = "1.0.104", features = ["derive"]}
+serde = {version = "1.0.63", features = ["derive"]}
