@@ -3,9 +3,9 @@ use std::collections::binary_heap::BinaryHeap;
 use std::cmp::Ordering;
 use serde::{Serialize, Deserialize};
 use bitvec::prelude::*;
-
-pub mod io;
-
+use unicode_normalization::UnicodeNormalization;
+use bincode;
+use bincode::deserialize;
 
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -33,11 +33,16 @@ impl PartialOrd for Node {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+/// A type containing the necessary information to encode and decode text using huffman code compression.
+/// this struct do not give a code point for every unicode char, instead it only give one to the char
+/// present during the creation of the map.
 pub struct HuffmanCodeMap(BTreeMap<char, BitVec<Lsb0, u8>>);
 
 
 impl HuffmanCodeMap {
-    pub fn new(text: String) -> Self {
+    ///create a new HuffmanCodeMap witch is optimal for the given string
+    pub fn new(text: &String) -> Self {
+        let text = text.nfc().collect::<String>();
         
         let mut char_list = BTreeMap::new();
         for ch in text.chars() {
@@ -66,7 +71,8 @@ impl HuffmanCodeMap {
     
     code
     }
-    pub fn get_char_code(&self, ch: char) -> Result<BitVec<Lsb0, u8>, ()> {
+
+    fn get_char_code(&self, ch: char) -> Result<BitVec<Lsb0, u8>, ()> {
         let code_option = self.0.get(&ch).cloned();
         match code_option {
             Some(code) => Result::Ok(code),
@@ -74,22 +80,25 @@ impl HuffmanCodeMap {
             
         }
     }
-    
-    pub fn encode(&self, text: String) -> Result<BitVec<Lsb0, u8>, ()> {
+
+    ///encode the String using the provided HuffmanCodeMap
+    /// return error if there is a char in the String which is not present in the code map
+    pub fn encode(&self, text: String) -> Result<Vec<u8>, ()> {
+        let text = text.nfc().collect::<String>();
         let char_code_list = text
             .chars()
             .map(|ch| { self.get_char_code(ch) });
 
-        let mut output_stream = BitVec::new();
+        let mut output_stream: BitVec<Lsb0, u8> = BitVec::new();
         for vec in char_code_list {
             output_stream.append(&mut vec?);
         }
-        Result::Ok(output_stream)
+        Result::Ok(output_stream.into_vec())
     }
 
     fn try_get_char_by_code(&self, bitvec: &BitVec) -> Option<char> {
         let resault = self.0.iter().find(|pair| {
-            pair.1 == bitvec 
+            pair.1 == bitvec
         });
 
         match resault {
@@ -98,7 +107,10 @@ impl HuffmanCodeMap {
         }
     }
 
-    pub fn decode(&self, mut binary_stream: BitVec<Lsb0, u8>) -> String {
+    ///decode the string which was encoded with the code map.
+    /// if you use the wrong HuffmanCodeMap to decode it will return a incorrect string
+    pub fn decode(&self, bytes_stream: &[u8]) -> String {
+        let mut binary_stream: BitVec<Lsb0, u8> = BitVec::from_slice(bytes_stream);
         let mut str_chache = String::new();
         let mut char_chache: BitVec = BitVec::new();
 
@@ -113,6 +125,17 @@ impl HuffmanCodeMap {
         }
         str_chache
 
+    }
+
+    ///serialize the given HuffmanCodeMap into a Vec<u8> using bincode
+    pub fn serialize(&self) -> Result<Vec<u8>, Box<bincode::ErrorKind>> {
+        bincode::serialize(self)
+    }
+
+    ///deserialize a slice of u8 into a HuffmanCodeMap.
+    ///it should have bean serialize with bincode otherwise it will yield a error
+    pub fn deserialize(binary_stream: &[u8]) -> Result<HuffmanCodeMap, Box<bincode::ErrorKind>> {
+        bincode::deserialize(binary_stream)
     }
 }
 
@@ -137,136 +160,32 @@ fn generate_codes(node: &Node, prefix: BitVec<Lsb0, u8>, out_codes: &mut Huffman
 
 impl Node {
     pub fn merge(node1: Node, node2: Node) -> Node {
-        let (bigger_node, smaler_node) = match node1.cmp(&node2) {
+        let (bigger_node, smaller_node) = match node1.cmp(&node2) {
             Ordering::Less => {(node2, node1)},
             Ordering::Equal => (node1, node2),
             Ordering::Greater => (node1, node2),
         };
 
         Node {
-            frequency: bigger_node.frequency + smaler_node.frequency,
-            kind: NodeKind::Internal(Box::new(smaler_node), Box::new(bigger_node)),
+            frequency: bigger_node.frequency + smaller_node.frequency,
+            kind: NodeKind::Internal(Box::new(smaller_node), Box::new(bigger_node)),
         }
     }
 }
 
 
 mod test {
-    use bitvec::prelude::*;
-    use super::{Node, NodeKind, HuffmanCodeMap};
+    use super::HuffmanCodeMap;
 
     #[test]
     fn name() {
         let s = "abbccccdddddeeeeee";
-        let map = HuffmanCodeMap::new(String::from(s));
+        let map = HuffmanCodeMap::new(&String::from(s));
         let code = map.encode(String::from(s));
-        let ss = map.decode(code.unwrap());
+        let ss = map.decode( &code.unwrap());
         assert_eq!(s, ss);
 
-        
+
 
     }
-
-    /*
-    #[test]
-    fn partily_internal_merge_test() {
-        let n1 = Node {
-            frequency: 3,
-            kind: NodeKind::Internal(
-                Box::new(
-                    Node {
-                        frequency: 1,
-                        kind: NodeKind::Leaf('c'),
-                    }
-                ),
-                Box::new(
-                    Node {
-                        frequency: 1,
-                        kind: NodeKind::Leaf('b'),
-                    }
-                )
-            ),
-        };
-
-        let n2 = Node {
-            frequency: 5,
-            kind: NodeKind::Leaf('a'),
-        };
-
-        let n3 = Node::merge(n1, n2);
-        assert_eq!(n3.frequency, 8);
-
-        match n3.kind {
-            NodeKind::Leaf(..) => {panic!()},
-            NodeKind::Internal(left_child, right_child) => {
-                assert_eq!(left_child.frequency, 3);
-                assert_eq!(right_child.frequency, 5);
-
-                match right_child.kind {
-                    NodeKind::Internal(..) => panic!(),
-                    NodeKind::Leaf(ch) => {
-                        assert_eq!(ch, 'a');
-                    }
-                }
-
-                match left_child.kind {
-                    NodeKind::Leaf(..) => panic!(),
-                    NodeKind::Internal(left_child, right_child) => {
-                        assert_eq!(left_child.frequency, 1);
-                        assert_eq!(right_child.frequency, 2);
-
-                        match right_child.kind {
-                            NodeKind::Internal(..) => panic!(),
-                            NodeKind::Leaf(ch) => {
-                                assert_eq!(ch, 'b');
-                            }
-                        }
-
-                        match left_child.kind {
-                            NodeKind::Internal(..) => panic!(),
-                            NodeKind::Leaf(ch) => {
-                                assert_eq!(ch, 'c');
-                            }
-                        }
-                    } 
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn leaf_merge_test() {
-        let n1 = Node {
-            frequency: 2,
-            kind: NodeKind::Leaf('a'),
-        };
-
-        let n2 = Node {
-            frequency: 1,
-            kind: NodeKind::Leaf('b'),
-        };
-
-        let n3 = Node::merge(n1, n2);
-
-        assert_eq!(n3.frequency, 3);
-
-        match n3.kind {
-            NodeKind::Leaf(..) => panic!(),
-
-            NodeKind::Internal(left_child, right_child) => {
-                assert_eq!(left_child.frequency, 1);
-                assert_eq!(right_child.frequency, 2);
-
-                match right_child.kind {
-                    NodeKind::Leaf(ch) => assert_eq!(ch, 'a'),
-                    NodeKind::Internal(..) => panic!(),
-                }
-
-                match left_child.kind {
-                    NodeKind::Leaf(ch) => assert_eq!(ch, 'b'), 
-                    NodeKind::Internal(..) => panic!(),
-                }
-            }
-        }
-    }*/
 }
