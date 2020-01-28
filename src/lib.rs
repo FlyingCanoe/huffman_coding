@@ -123,11 +123,11 @@ impl HuffmanCodeMap {
             char_cache.push(binary_stream.pop().unwrap());
             //binary_stream.remove(0);
             if let Some(ch) = self.try_get_char_by_code(&char_cache) {
-                sir_cache.push(ch);
+                str_cache.push(ch);
                 char_cache.clear();
             }
         }
-        sir_cache
+        str_cache
 
     }
 
