@@ -60,13 +60,12 @@ impl HuffmanCodeMap {
             });
         }
         
-        while heap.len() > 1 { 
+        while heap.len() > 1 {
+            //this code will only run if there at least 2 item in the heap
+            //thus the 2 unwrap are fine
             let left_chill = heap.pop().unwrap(); 
             let right_chill = heap.pop().unwrap();
             heap.push(Node::merge(left_chill, right_chill));
-            if heap.len() == 1 {
-                break
-            }
         }
 
         let mut code = HuffmanCodeMap {0: BTreeMap::new()};
@@ -100,11 +99,11 @@ impl HuffmanCodeMap {
     }
 
     fn try_get_char_by_code(&self, bitvec: &BitVec) -> Option<char> {
-        let resault = self.0.iter().find(|pair| {
+        let results = self.0.iter().find(|pair| {
             pair.1 == bitvec
         });
 
-        match resault {
+        match results {
             Some(tuple) => Some(*tuple.0),
             None => None,
         }
@@ -114,19 +113,21 @@ impl HuffmanCodeMap {
     /// if you use the wrong HuffmanCodeMap to decode it will return a incorrect string
     pub fn decode(&self, bytes_stream: &[u8]) -> String {
         let mut binary_stream: BitVec<Lsb0, u8> = BitVec::from_slice(bytes_stream);
-        let mut str_chache = String::new();
-        let mut char_chache: BitVec = BitVec::new();
+        let mut str_cache = String::new();
+        let mut char_cache: BitVec = BitVec::new();
 
         binary_stream.reverse();
         while !binary_stream.is_empty() {
-            char_chache.push(binary_stream.pop().unwrap());
+            // when the binary_stream is empty it will break
+            // thus the unwrap is fine
+            char_cache.push(binary_stream.pop().unwrap());
             //binary_stream.remove(0);
-            if let Some(ch) = self.try_get_char_by_code(&char_chache) {
-                str_chache.push(ch);
-                char_chache.clear();
+            if let Some(ch) = self.try_get_char_by_code(&char_cache) {
+                sir_cache.push(ch);
+                char_cache.clear();
             }
         }
-        str_chache
+        sir_cache
 
     }
 
