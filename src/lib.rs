@@ -41,8 +41,11 @@ pub struct HuffmanCodeMap(BTreeMap<char, BitVec<Lsb0, u8>>);
 
 impl HuffmanCodeMap {
     ///create a new HuffmanCodeMap witch is optimal for the given string
+    /// # panic
+    /// panic if the string is zero char wide
     pub fn new(text: &String) -> Self {
         let text = text.nfc().collect::<String>();
+        if text.len() == 0 {panic!("Bug zero len wide string cannot be use to create a HuffmanCodeMap")}
         
         let mut char_list = BTreeMap::new();
         for ch in text.chars() {
@@ -67,9 +70,9 @@ impl HuffmanCodeMap {
         }
 
         let mut code = HuffmanCodeMap {0: BTreeMap::new()};
-    generate_codes(&heap.pop().unwrap(), BitVec::new(), &mut code);
+        generate_codes(&heap.pop().unwrap(), BitVec::new(), &mut code);
     
-    code
+        code
     }
 
     fn get_char_code(&self, ch: char) -> Result<BitVec<Lsb0, u8>, ()> {
@@ -184,8 +187,11 @@ mod test {
         let code = map.encode(String::from(s));
         let ss = map.decode( &code.unwrap());
         assert_eq!(s, ss);
+    }
 
-
-
+    #[test]
+    #[should_panic]
+    fn zero_size_string_for_huffman_code_map() {
+        HuffmanCodeMap::new(&"".into());
     }
 }
