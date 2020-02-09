@@ -10,7 +10,7 @@ use bstr;
 use bstr::{CharOrRaw, BString, ByteVec};
 use bstr::ByteSlice;
 use crate::LocalCharOrRaw::Char;
-use std::mem::align_of;
+
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 enum LocalCharOrRaw {
@@ -56,7 +56,7 @@ impl From<CharOrRaw<'_>> for LocalCharOrRaw {
 /// A type containing the necessary information to encode and decode text using huffman code compression.
 /// this struct do not give a code point for every unicode char, instead it only give one to the char
 /// present during the creation of the map.
-pub struct HuffmanCodeMap(HashMap<LocalCharOrRaw, BitVec<Lsb0, u8>>);
+pub struct HuffmanCodeMap(HashMap<LocalCharOrRaw, BitBox<Lsb0, u8>>);
 
 impl HuffmanCodeMap {
     ///create a new HuffmanCodeMap witch is optimal for the given text
@@ -97,7 +97,7 @@ impl HuffmanCodeMap {
         code
     }
 
-    fn get_char_code(&self, ch: LocalCharOrRaw) -> Result<BitVec<Lsb0, u8>, ()> {
+    fn get_char_code(&self, ch: LocalCharOrRaw) -> Result<BitBox<Lsb0, u8>, ()> {
         let code_option = self.0.get(&ch).cloned();
         match code_option {
             Some(code) => Result::Ok(code),
@@ -109,12 +109,10 @@ impl HuffmanCodeMap {
     ///encode the String using the provided HuffmanCodeMap
     /// return error if there is a char in the String which is not present in the code map
     pub fn encode(&self, text: &[u8]) -> Result<Vec<u8>, ()> {
-        let char_list: Vec<CharOrRaw> = text.chars_or_raws().collect();
-
         let mut output_stream: BitVec<Lsb0, u8> = BitVec::new();
 
-        for ch in char_list {
-            output_stream.append(&mut self.get_char_code(ch.into())?)
+        for ch in text.chars_or_raws() {
+            output_stream.extend_from_slice((&mut self.get_char_code(ch.into())?))
         }
 
         let len = output_stream.len();
@@ -125,9 +123,9 @@ impl HuffmanCodeMap {
         Result::Ok(output_stream)
     }
 
-    fn try_get_char_by_code(&self, bitvec: &BitVec) -> Option<LocalCharOrRaw> {
+    fn try_get_char_by_code(&self, bitslice: &BitSlice) -> Option<LocalCharOrRaw> {
         let results = self.0.iter().find(|pair| {
-            pair.1 == bitvec
+            pair.1 == bitslice
         });
 
         match results {
@@ -192,7 +190,7 @@ fn generate_codes(node: &Node, prefix: BitVec<Lsb0, u8>, out_codes: &mut Huffman
             generate_codes(&right_child, right_prefix, out_codes);
         }
         NodeKind::Leaf(ch) => {
-            out_codes.0.insert(ch.clone(), prefix);
+            out_codes.0.insert(ch.clone(), BitBox::from(prefix));
         }
     }
 }
