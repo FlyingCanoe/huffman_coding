@@ -1,23 +1,20 @@
-use std::collections::HashMap;
-use std::collections::binary_heap::BinaryHeap;
-use std::cmp::Ordering;
-use serde::{Serialize, Deserialize};
 use bitvec::prelude::*;
-use unicode_normalization::UnicodeNormalization;
-use bincode;
-use bincode::deserialize;
-use bstr;
-use bstr::{CharOrRaw, BString, ByteVec};
-use bstr::ByteSlice;
-use crate::LocalCharOrRaw::Char;
+use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
+use std::collections::binary_heap::BinaryHeap;
+use std::collections::HashMap;
 
+use bincode;
+
+use bstr;
+use bstr::ByteSlice;
+use bstr::{ByteVec, CharOrRaw};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 enum LocalCharOrRaw {
     Char(char),
-    Raw(Box<[u8]>)
+    Raw(Box<[u8]>),
 }
-
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 enum NodeKind {
@@ -64,8 +61,10 @@ impl HuffmanCodeMap {
     /// # panic
     /// panic if the slice is zero byte wide
     pub fn new(text: &[u8]) -> Self {
-        if text.len() == 0 {panic!("Bug zero len wide string cannot be use to create a HuffmanCodeMap")}
-        
+        if text.len() == 0 {
+            panic!("Bug zero len wide string cannot be use to create a HuffmanCodeMap")
+        }
+
         let mut char_list = HashMap::new();
 
         //cont each occurrence of a char or invalid byte
@@ -82,18 +81,18 @@ impl HuffmanCodeMap {
                 kind: NodeKind::Leaf(counted_char.0.into()),
             });
         }
-        
+
         while heap.len() > 1 {
             //this code will only run if there at least 2 item in the heap
             //thus the 2 unwrap are fine
-            let left_chill = heap.pop().unwrap(); 
+            let left_chill = heap.pop().unwrap();
             let right_chill = heap.pop().unwrap();
             heap.push(Node::merge(left_chill, right_chill));
         }
 
-        let mut code = HuffmanCodeMap {0: HashMap::new()};
+        let mut code = HuffmanCodeMap { 0: HashMap::new() };
         generate_codes(&heap.pop().unwrap(), BitVec::new(), &mut code);
-    
+
         code
     }
 
@@ -102,7 +101,6 @@ impl HuffmanCodeMap {
         match code_option {
             Some(code) => Result::Ok(code),
             None => Result::Err(()),
-            
         }
     }
 
@@ -112,21 +110,19 @@ impl HuffmanCodeMap {
         let mut output_stream: BitVec<Lsb0, u8> = BitVec::new();
 
         for ch in text.chars_or_raws() {
-            output_stream.extend_from_slice((&mut self.get_char_code(ch.into())?))
+            output_stream.extend_from_slice(&mut self.get_char_code(ch.into())?)
         }
 
         let len = output_stream.len();
         let mut output_stream = output_stream.into_vec();
 
-        output_stream.insert(0, 8-(len % 8) as u8);
+        output_stream.insert(0, 8 - (len % 8) as u8);
 
         Result::Ok(output_stream)
     }
 
     fn try_get_char_by_code(&self, bitslice: &BitSlice) -> Option<LocalCharOrRaw> {
-        let results = self.0.iter().find(|pair| {
-            pair.1 == bitslice
-        });
+        let results = self.0.iter().find(|pair| pair.1 == bitslice);
 
         match results {
             Some(tuple) => Some(tuple.0.clone()),
@@ -141,14 +137,13 @@ impl HuffmanCodeMap {
 
         let (_, bytes_stream) = bytes_stream.split_first().unwrap();
 
-        let mut binary_stream: BitBox<Lsb0, u8> = BitBox::from_slice(bytes_stream);
-        let mut str_cache: Vec<u8>  = vec![];
+        let binary_stream: BitBox<Lsb0, u8> = BitBox::from_slice(bytes_stream);
+        let mut str_cache: Vec<u8> = vec![];
         let mut char_cache: BitVec = BitVec::new();
 
         let binary_stream = &binary_stream[..binary_stream.len() - alignment as usize];
-        
-        for bit in binary_stream.iter() {
 
+        for bit in binary_stream.iter() {
             char_cache.push(*bit);
             if let Some(ch) = self.try_get_char_by_code(&char_cache) {
                 match ch {
@@ -159,15 +154,12 @@ impl HuffmanCodeMap {
             }
         }
         str_cache
-
     }
-
 
     ///serialize the given HuffmanCodeMap into a Vec<u8> using bincode
     pub fn serialize(&self) -> Result<Vec<u8>, Box<bincode::ErrorKind>> {
         bincode::serialize(self)
     }
-
 
     ///deserialize a slice of u8 into a HuffmanCodeMap.
     ///it should have bean serialize with bincode otherwise it will yield a error
@@ -177,13 +169,12 @@ impl HuffmanCodeMap {
 }
 
 fn generate_codes(node: &Node, prefix: BitVec<Lsb0, u8>, out_codes: &mut HuffmanCodeMap) {
-
     match &node.kind {
         NodeKind::Internal(ref left_child, ref right_child) => {
             let mut left_prefix = prefix.clone();
             left_prefix.push(false);
             generate_codes(&left_child, left_prefix, out_codes);
- 
+
             let mut right_prefix = prefix;
             right_prefix.push(true);
 
@@ -198,18 +189,20 @@ fn generate_codes(node: &Node, prefix: BitVec<Lsb0, u8>, out_codes: &mut Huffman
 impl Node {
     pub fn merge(node1: Node, node2: Node) -> Node {
         let (bigger_node, smaller_node) = match node1.cmp(&node2) {
-            Ordering::Less => {(node2, node1.clone())},
+            Ordering::Less => (node2, node1.clone()),
             Ordering::Equal => (node1.clone(), node2),
             Ordering::Greater => (node1.clone(), node2.clone()),
         };
 
         Node {
             frequency: bigger_node.frequency + smaller_node.frequency,
-            kind: NodeKind::Internal(Box::new(smaller_node.clone()), Box::new(bigger_node.clone())),
+            kind: NodeKind::Internal(
+                Box::new(smaller_node.clone()),
+                Box::new(bigger_node.clone()),
+            ),
         }
     }
 }
-
 
 mod test {
     use super::HuffmanCodeMap;
@@ -228,7 +221,6 @@ mod test {
         let output_buffer = map.decode(&mut encoded_data);
 
         assert_eq!(output_buffer, buffer);
-
     }
 
     #[test]
@@ -236,7 +228,7 @@ mod test {
         let s = "abbccccdddddeeeeee";
         let map = HuffmanCodeMap::new(s.as_bytes());
         let code = map.encode(s.as_bytes());
-        let ss = map.decode( &mut code.unwrap());
+        let ss = map.decode(&mut code.unwrap());
         assert_eq!(s.as_bytes().to_vec(), ss);
     }
 
