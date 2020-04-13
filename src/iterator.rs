@@ -1,3 +1,118 @@
+use core::char;
+use serde::{Deserialize, Serialize};
+use std::io;
+use std::{fmt::Debug, iter::Iterator};
+use super::bitvec1::{BitSliceRef};
+
+
+pub struct BitIter<'a> {
+    index: usize,
+    slice: BitSliceRef<'a>,
+}
+
+impl<'a> BitIter<'a> {
+    pub(crate) fn new(slice: BitSliceRef) -> BitIter {
+        BitIter {
+            index: 0,
+            slice,
+        }
+    }
+}
+
+impl<'a> Iterator for BitIter<'a> {
+    type Item = bool;
+
+    fn next(&mut self) -> Option<Self::Item> {
+
+        if self.slice.len() > self.index {
+            let resault = self.slice.get(self.index);
+            debug_assert!(resault.is_some());
+
+            self.index += 1;
+
+            return resault;
+        }
+        None
+    }
+}
+
+pub struct Bits<I: Iterator<Item = io::Result<u8>>> {
+    base: I,
+    byte: u8,
+    index: u8,
+    first_take: bool
+}
+
+impl<I: Iterator<Item = io::Result<u8>>> Bits<I> {
+    pub fn new(base: I) -> Self {
+        let out = Bits {
+            base,
+            byte: 0,
+            index: 0,
+            first_take: true,
+        };
+
+        out
+    }
+}
+
+impl<I: Iterator<Item = io::Result<u8>>> Iterator for Bits<I> {
+    type Item = io::Result<bool>;
+
+    fn next(&mut self) -> Option<io::Result<bool>> {
+        if self.first_take {
+            self.byte = match self.base.next() {
+                Some(value) => {
+                    match value {
+                        Ok(value) => value,
+                        Err(error) => return Some(Result::Err(error))
+                    }
+                },
+                None => return None,
+            };
+            self.first_take = false;
+        }
+
+        //Check if the current byte is exhausted.
+        if self.index == 8 {
+            //If it is the case -> iter over the next byte.
+            self.byte = match self.base.next() {
+                Some(byte) => match byte {
+                    Result::Ok(byte) => byte,
+                    Result::Err(error) => return Some(Result::Err(error)),
+                },
+                None => {
+                    return None;
+                },
+            };
+            self.index = 1;
+            let bit = get_bit_at(self.byte, 0);
+            return Some(Result::Ok(bit));
+        }
+
+        let bit = get_bit_at(self.byte, self.index);
+
+        self.index += 1;
+
+        return Some(Result::Ok(bit));
+    }
+}
+
+/// Set the bit at position 'n'. Bits are numbred from 0 (most significant) to 7 (least significant).
+fn set_byte_at(input: &mut u8, pos: u8, value: bool) {
+    assert!(pos < 8);
+    *input = *input & (128 >> pos);
+    if value {
+        *input = *input | (128 >> pos)
+    }
+}
+
+/// get the bit at position `n`. Bits are numbered from 0 (most significant) to 7 (least significant).
+fn get_bit_at(input: u8, pos: u8) -> bool {
+    assert!(pos < 8);
+    input & (128 >> pos) != 0
+}
+
 /*
 Base on the bstr crate utf-8 automaton. The copyright for the original version is reproduced below
 
@@ -23,11 +138,6 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 */
-
-
-use core::char;
-use std::io;
-use serde::{Serialize, Deserialize};
 
 // The UTF-8 decoder provided here is based on the one presented here:
 // https://bjoern.hoehrmann.de/utf-8/decoder/dfa/
@@ -87,7 +197,7 @@ const STATES_FORWARD: &'static [u8] = &[
   0, 36, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 ];
 
-#[derive(Hash, PartialEq, Eq, Ord, PartialOrd, Clone, Serialize, Deserialize)]
+#[derive(Hash, PartialEq, Eq, Ord, PartialOrd, Clone, Debug)]
 ///a char or 1-3 bytes of invalid ut8.
 ///This is yielded by the `charsOrRaws` iterator which can be created via the ByteSlice::utf8_chunks method.
 ///The 'a lifetime parameter corresponds to the lifetime of the bytes that are being iterated over.
@@ -98,42 +208,38 @@ pub enum CharOrRaw {
 
 #[derive(Clone)]
 ///a iterator over a char or raw invalid utf8
-pub struct CharsOrRaws<I: Iterator<Item = io::Result<u8>>> {
+pub struct CharsOrRaws<I: Iterator<Item = anyhow::Result<u8>>> {
     base: I,
 }
 
-impl<I: Iterator<Item = io::Result<u8>>> CharsOrRaws<I> {
+impl<I: Iterator<Item = anyhow::Result<u8>>> CharsOrRaws<I> {
     pub fn new(base: I) -> CharsOrRaws<I> {
         CharsOrRaws { base }
     }
-
-    #[inline]
-    pub fn as_bytes_iterator(self) -> I {
-        self.base
-    }
 }
 
-impl<B: Iterator<Item = io::Result<u8>>> Iterator for CharsOrRaws<B> {
-    type Item = io::Result<CharOrRaw>;
+impl<B: Iterator<Item = anyhow::Result<u8>>> Iterator for CharsOrRaws<B> {
+    type Item = anyhow::Result<CharOrRaw>;
 
     #[inline]
-    fn next(&mut self) -> Option<io::Result<CharOrRaw>> {
-        return decode_iterator(&mut self.base)
+    fn next(&mut self) -> Option<anyhow::Result<CharOrRaw>> {
+        return decode_iterator(&mut self.base);
     }
 }
 
 #[inline]
-pub fn decode_iterator<B>(iter: &mut B) -> Option<io::Result<CharOrRaw>>
-    where B: Iterator<Item = io::Result<u8>>,
-     {
+pub fn decode_iterator<B>(iter: &mut B) -> Option<anyhow::Result<CharOrRaw>>
+where
+    B: Iterator<Item = anyhow::Result<u8>>,
+{
     let mut chache: Vec<u8> = Vec::with_capacity(3);
     chache.push(match iter.next() {
         None => return None,
         Some(b) => match b {
-            Result::Ok(b) if b <= 0x7F => return Some(io::Result::Ok(CharOrRaw::Char(b as char))),
+            Result::Ok(b) if b <= 0x7F => return Some(anyhow::Result::Ok(CharOrRaw::Char(b as char))),
             Result::Ok(b) => b,
-            Result::Err(err) => return Some(io::Result::Err(err)),
-        }
+            Result::Err(err) => return Some(anyhow::Result::Err(err)),
+        },
     });
 
     let (mut state, mut cp) = (ACCEPT, 0);
@@ -143,18 +249,18 @@ pub fn decode_iterator<B>(iter: &mut B) -> Option<io::Result<CharOrRaw>>
             Result::Ok(value) => {
                 chache.push(value);
                 decode_step(&mut state, &mut cp, value);
-        
+
                 if state == ACCEPT {
                     // SAFETY: This is safe because `decode_step` guarantees that
                     // `cp` is a valid Unicode scalar value in an ACCEPT state.
                     let ch = unsafe { char::from_u32_unchecked(cp) };
-                    return Some(io::Result::Ok(CharOrRaw::Char(ch)));
+                    return Some(anyhow::Result::Ok(CharOrRaw::Char(ch)));
                 } else if state == REJECT {
                     // At this point, we always want to advance at least one byte.
-                    return Some(io::Result::Ok(CharOrRaw::Raw(chache.into_boxed_slice())));
+                    return Some(anyhow::Result::Ok(CharOrRaw::Raw(chache.into_boxed_slice())));
                 }
-            },
-            Result::Err(error) => { return Some(io::Result::Err(error)) },
+            }
+            Result::Err(error) => return Some(anyhow::Result::Err(error)),
         }
     }
     None
@@ -169,4 +275,69 @@ pub fn decode_step(state: &mut usize, cp: &mut u32, b: u8) {
         *cp = (b as u32 & 0b111111) | (*cp << 6);
     }
     *state = STATES_FORWARD[*state + class as usize] as usize;
+}
+
+mod test {
+    use super::BitSliceRef;
+    use super::Bits;
+    use super::get_bit_at;
+
+    use std::io::{BufReader, Read, Result};
+
+    #[test]
+    fn bit_in_21() {
+        let num = vec![21];
+        let buf = num.as_slice();
+        let boolvec: Result<Vec<bool>> = Bits::new(buf.bytes()).collect();
+
+        assert_eq!(boolvec.unwrap(), vec![false, false, false, true, false, true, false, true]);
+    }
+
+    #[test]
+    fn bit_test() {
+        let num = 72;
+        let mut boolvec = vec![];
+        for pos in 0..8 {
+            boolvec.push(get_bit_at(num, pos));
+        }
+        
+        assert_eq!(boolvec, vec![false, true, false, false, true, false, false, false])
+    }
+
+    #[test]
+    fn feature() {
+        let silce = BitSliceRef::from_slice(&[255], 8);
+
+        let iter = silce.iter();
+        assert_eq!(iter.index, 0);
+
+        let boolvec: Vec<bool> = iter.collect();
+
+        assert_eq!(boolvec.len(), 8);
+    }
+
+    #[test]
+    fn get_bit_at_127_test() {
+        //127: 01111111
+        let num = 127;
+        let value = super::get_bit_at(num, 0);
+        assert!(!value);
+
+        for i in 1..8 {
+            let value = super::get_bit_at(num, i);
+            assert!(value)
+        }
+    }
+
+    #[test]
+    fn get_bit_at_254_test() {
+        //254: 11111110
+        let num = 254;
+        for i in 0..7 {
+            let value = super::get_bit_at(num, i);
+            assert!(value)
+        }
+        let value = super::get_bit_at(num, 7);
+        assert!(!value)
+    }
 }
