@@ -1,13 +1,14 @@
 use serde::{Deserialize, Serialize};
+use std::alloc::{alloc, realloc, dealloc};
+use std::alloc::{handle_alloc_error, Global, GlobalAlloc, Layout};
 use std::convert::TryInto;
-use std::marker::PhantomData;
-use std::ops::Deref;
 use std::fmt::{Debug, Formatter, Result};
+use std::marker::PhantomData;
+use std::mem;
+use std::ops::Deref;
 use std::ptr;
 use std::ptr::{NonNull, Unique};
-use std::mem;
-use std::alloc::{GlobalAlloc, Layout, Global, handle_alloc_error};
-use std::alloc::{alloc, realloc};
+use std::slice;
 
 use super::iterator::BitIter;
 use std::borrow::Borrow;
@@ -19,11 +20,8 @@ pub struct BitSliceRef<'a> {
 }
 
 impl<'a> BitSliceRef<'a> {
-    pub fn from_slice(slice: &'a[u8], len: usize) -> Self {
-        BitSliceRef {
-            len,
-            slice,
-        }
+    pub fn from_slice(slice: &'a [u8], len: usize) -> Self {
+        BitSliceRef { len, slice }
     }
 
     pub fn len(&self) -> usize {
@@ -33,7 +31,7 @@ impl<'a> BitSliceRef<'a> {
     pub fn into_bitbox(self) -> BitBox {
         BitBox {
             len: self.len,
-            raw_box: self.slice.into()
+            raw_box: self.slice.into(),
         }
     }
 
@@ -44,7 +42,7 @@ impl<'a> BitSliceRef<'a> {
 
             let byte = match self.slice.get(byte_index) {
                 Some(byte) => byte,
-                None => return  None,
+                None => return None,
             };
             return Some(get_bit_at(*byte, bit_index as u8));
         }
@@ -56,10 +54,10 @@ impl<'a> BitSliceRef<'a> {
     }
 }
 
-#[derive(Clone, Hash, Eq, PartialEq)]
+#[derive(Clone)]
 pub struct BitBox {
     len: usize,
-    raw_box: Box<[u8]>,
+    raw_box: Unique<[u8]>,
 }
 
 impl BitBox {
@@ -86,44 +84,32 @@ pub struct BitVec {
 }
 
 impl BitVec {
-
     fn grow(&mut self) {
-        // this is all pretty delicate, so let's say it's all unsafe
         unsafe {
-            // current API requires us to specify size and alignment manually.
-            let align = mem::align_of::<u8>();
-
             let (new_cap, ptr) = if self.cap == 0 {
-                let ptr = alloc(Layout::array(1).unwrap());
+                let ptr = alloc(Layout::array::<u8>(1).unwrap());
                 (8, ptr)
             } else {
-                // as an invariant, we can assume that `self.cap < isize::MAX`,
-                // so this doesn't need to be checked.
-                let new_cap = self.cap * 2;
-                // Similarly this can't overflow due to previously allocating this
-                let old_num_bytes = self.cap / 8;
+                let new_cap = self.cap.checked_mul(2).unwrap();
+                let old_num_bytes = self.byte_cap();
 
-                // check that the new allocation doesn't exceed `isize::MAX` at all
-                // regardless of the actual size of the capacity. This combines the
-                // `new_cap <= isize::MAX` and `new_num_bytes <= usize::MAX` checks
-                // we need to make. We lose the ability to allocate e.g. 2/3rds of
-                // the address space with a single Vec of i16's on 32-bit though.
-                // Alas, poor Yorick -- I knew him, Horatio.
-                assert!(old_num_bytes <= (::std::isize::MAX as usize) / 2,
-                        "capacity overflow");
-
+                // this cant overflow because a bitvec can only contain usize bit thus
+                // usize / 8 byte.
                 let new_num_bytes = old_num_bytes * 2;
-                let ptr = realloc(self.ptr.as_ptr() as *mut _,
-                                           Layout::array(self.cap / 8).unwrap(),
-                                           new_num_bytes,
-                                         );
+                let ptr = realloc(
+                    self.ptr.as_ptr() as *mut _,
+                    Layout::array::<u8>(self.cap / 8).unwrap(),
+                    new_num_bytes,
+                );
                 (new_cap, ptr)
             };
 
             // If allocate or reallocate fail, we'll get `null` back
-            if ptr.is_null() { handle_alloc_error(Layout::array(self.cap / 8).unwrap()); }
+            if ptr.is_null() {
+                handle_alloc_error(Layout::array::<u8>(self.byte_cap()).unwrap());
+            }
 
-            self.ptr = Unique::new(ptr as *mut _);
+            self.ptr = Unique::new(ptr as *mut _).unwrap();
             self.cap = new_cap;
         }
     }
@@ -137,58 +123,59 @@ impl BitVec {
     }
 
     pub fn pop(&mut self) -> Option<bool> {
-        todo!();
-        /*if self.len == 0 {
-            return None;
+        if self.len == 0 {
+            return None
         }
+        let results = self.get(self.len -1 );
+        self.len -= 1;
 
-        let num = self.bit_in_last_byte();
-
-        if num == 1 {
-            let result = get_bit_at(self.ptr.pop().unwrap(), 0);
-            self.len -= 1;
-
-            return Some(result);
-        } else {
-            let result = get_bit_at(*self.ptr.last().unwrap(), num.wrapping_sub(1) as u8);
-            self.len -= 1;
-
-            return Some(result);
-        }*/
+        return results
     }
 
     pub fn push(&mut self, value: bool) {
-        todo!()
-        /*let num = self.bit_in_last_byte();
-        // Check if all byte are full.
-        if num == 0 {
-            self.ptr.push(0);
-            //Unwrap is fine as we just push a value on the vec.
-            set_bit_at(self.ptr.last_mut().unwrap(), 0, value)
-        } else {
-            set_bit_at(self.ptr.last_mut().unwrap(), num as u8, value)
+        if self.len == self.cap {
+            self.grow()
         }
 
-        self.len += 1;*/
+        // check if all byte are full
+        if self.len % 8 == 0 {
+            unsafe {
+                if value {
+                    ptr::write(
+                        self.ptr.as_ptr().offset(self.byte_len() as isize),
+                        0b10_00_00_00,
+                    )
+                } else {
+                    ptr::write(self.ptr.as_ptr().offset(self.byte_len() as isize), 0)
+                }
+            }
+        } else {
+            let bit_offset = self.bit_in_last_byte();
+            let last_byte = unsafe { &mut * self.ptr.as_ptr().offset((self.byte_len().saturating_sub(1)) as isize) };
+
+            set_bit_at(last_byte, bit_offset, value);
+        }
+
+        self.len += 1;
     }
 
-    pub fn get(&self, index: usize) -> Option<bool> {
-        todo!();
-        /*if self.len <= index {
+    fn get(&self, index: usize) -> Option<bool> {
+        if self.len > index {
             let byte_index = index / 8;
             let bit_index = index % 8;
 
-            let byte = match self.ptr.get(byte_index) {
-                Some(byte) => byte,
-                None => return  None,
-            };
-            return Some(get_bit_at(*byte, bit_index as u8));
+            let byte = unsafe { self.ptr.as_ptr().offset(byte_index as isize).read() };
+
+            return Some(get_bit_at(byte, bit_index as u8))
         }
-        None*/
+        None
     }
 
     pub fn as_bitslice(&self) -> BitSliceRef {
-        todo!()
+        BitSliceRef {
+            len: self.len,
+            slice: unsafe { slice::from_raw_parts(self.ptr.as_ptr(), self.byte_len()) },
+        }
         /*BitSliceRef {
             len: self.len,
             slice: self.ptr.as_slice(),
@@ -201,12 +188,16 @@ impl BitVec {
         }
     }
 
-    pub fn from_vec(vec: Vec<u8>, len: usize) -> Self {
-        todo!()
-        /*BitVec {
-            len,
-            ptr
-        }*/
+    /// crate a bitvec from a Vec<u8>
+    /// #Panic
+    /// a bitvec can only hold usize::MAX bit. If you give this function a vec<u8> with more than
+    /// usize:max / 8 element it will panic
+    pub fn from_vec(mut vec: Vec<u8>) -> Self {
+        BitVec {
+            len: vec.len().checked_mul(8).unwrap(),
+            cap: vec.capacity().checked_mul(8).unwrap(),
+            ptr: Unique::new(vec.as_mut_ptr()).unwrap(),
+        }
     }
 
     pub fn from_bitbox(bitbox: BitBox) -> Self {
@@ -218,8 +209,13 @@ impl BitVec {
     }
 
     pub fn into_vec(self) -> Vec<u8> {
-        todo!()
-        //self.ptr
+        unsafe {
+            return Vec::from_raw_parts(
+                self.ptr.as_ptr(),
+                self.byte_len(),
+                self.byte_cap(),
+            )
+        }
     }
 
     pub fn into_bitbox(self) -> BitBox {
@@ -235,11 +231,7 @@ impl BitVec {
     }
 
     pub fn clear(&mut self) {
-        todo!();
-        /*
-        self.ptr.clear();
-        self.len = 0;
-        */
+        self.len = 0
     }
 
     pub fn iter(&self) -> BitIter {
@@ -273,6 +265,21 @@ impl BitVec {
         copy*/
     }
 
+    /// return the number of bytes the BitVec is using
+    fn byte_len(&self) -> usize {
+        if self.len % 8 == 0 {
+            self.len / 8
+        }
+        else {
+            self.len / 8 + 1
+        }
+    }
+
+    /// return the number of bytes the BitVec have allocate
+    fn byte_cap(&self) -> usize {
+        self.cap / 8
+    }
+
     pub fn bit_in_last_byte(&self) -> u8 {
         (self.len % 8).try_into().unwrap()
     }
@@ -285,7 +292,7 @@ impl<'a> PartialEq<BitSliceRef<'a>> for BitSliceRef<'a> {
                 return true;
             }
         }
-        return false
+        return false;
     }
 }
 
@@ -295,14 +302,19 @@ impl<'a> PartialEq<BitSliceRef<'a>> for BitBox {
     }
 }
 
+impl<'a> PartialEq<BitSliceRef<<'a>> for BitBox {
+    fn eq(&self, other: BitBox) -> bool {
+        self.eq(other.as_bitslice())
+    }
+}
+
 impl<'a> Debug for BitSliceRef<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         write!(f, "BitSliceRef {{ [")?;
         for bit in self.iter() {
             if bit {
                 write!(f, "1, ")?;
-            }
-            else {
+            } else {
                 write!(f, "0, ")?;
             }
         }
@@ -322,7 +334,17 @@ impl Debug for BitVec {
     }
 }
 
-/// Set the bit at position 'n'. Bits are numbred from 0 (most significant) to 7 (least significant).
+impl Drop for BitVec {
+    fn drop(&mut self) {
+        let num_bytes = self.byte_cap();
+
+        unsafe {
+            dealloc(self.ptr.as_ptr(), Layout::array::<u8>(self.byte_cap()).unwrap())
+        }
+    }
+}
+
+/// Set the bit at position 'n'. Bits are numbered from 0 (most significant) to 7 (least significant).
 fn set_bit_at(input: &mut u8, pos: u8, value: bool) {
     assert!(pos < 8);
     *input = *input & (u8::rotate_right(127, pos as u32));
@@ -339,6 +361,69 @@ fn get_bit_at(input: u8, pos: u8) -> bool {
 }
 
 mod test {
+    use super::BitVec;
+    use std::ptr::Unique;
+    use crate::bitvec1::get_bit_at;
+
+    #[test]
+    fn pop_empty_bitvec() {
+        let mut vec = BitVec::new();
+
+        assert_eq!(vec.pop(), None);
+    }
+
+    #[test]
+    fn pop_bitvec() {
+        let mut slice = [64];
+        let mut vec = BitVec {
+            len: 2,
+            cap: 8,
+            ptr: Unique::new(&mut slice[0]).unwrap(),
+        };
+
+        assert_eq!(vec.pop(), Some(true));
+        assert_eq!(vec.pop(), Some(false));
+        assert_eq!(vec.pop(), None);
+    }
+
+    #[test]
+    fn new_bitvec() {
+        let vec = BitVec::new();
+        assert_eq!(vec.len, 0);
+        assert_eq!(vec.cap, 0);
+    }
+
+    #[test]
+    fn grow_bitvec() {
+        let mut vec = BitVec::from_vec(vec![0, 0]);
+        assert_eq!(vec.len, 16);
+        assert_eq!(vec.cap, 16);
+        vec.grow();
+
+        assert_eq!(vec.cap, 32);
+    }
+
+    #[should_panic]
+    #[test]
+    fn grow_bitvec_to_far() {
+        let mut vec = BitVec {
+            ptr: Unique::empty(),
+            len: 0,
+            cap: usize::MAX
+        };
+
+        vec.grow()
+    }
+
+    #[test]
+    fn grow_bitvec_empty()  {
+        let mut vec = BitVec::new();
+        assert_eq!(vec.cap, 0);
+        vec.grow();
+
+        assert_eq!(vec.cap, 8);
+        assert_eq!(vec.len, 0);
+    }
     #[test]
     fn set_bit_at_15_test() {
         // 255: 11111111
@@ -358,6 +443,19 @@ mod test {
         }
         // 254: 11111110
         assert_eq!(num, 255)
+    }
+
+    #[test]
+    fn get_bit_at_64() {
+        let num = 64;
+        let mut boolvec = vec![];
+
+        for i in 0..8 {
+            let temp = get_bit_at(num, i);
+            boolvec.push(temp);
+        }
+
+        assert_eq!(boolvec, vec![false, true, false, false, false, false, false, false])
     }
 
     #[test]
