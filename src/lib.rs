@@ -1,24 +1,27 @@
 #![feature(ptr_internals)]
 #![feature(allocator_api)]
 #![feature(alloc_layout_extra)]
+#![feature(vec_into_raw_parts)]
+#![feature(try_blocks)]
 
 //use bitvec::prelude::*;
 use std::cmp::Ordering;
 use std::collections::binary_heap::BinaryHeap;
-use std::collections::HashMap;
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::io;
 
-pub mod bitvec1;
-use bitvec1::{BitVec, BitBox, BitSliceRef};
+pub mod bitvec;
+use bitvec::{BitBox, BitSliceRef, BitVec};
 
 mod iterator;
 use iterator::{Bits, CharOrRaw, CharsOrRaws};
 
-use rustc_hash::FxHashMap;
 use anyhow;
-use anyhow::Context;
 use anyhow::bail;
+use anyhow::Context;
+use rustc_hash::FxHashMap;
+use serde::export::Option::Some;
 
 const END_OF_FILE: [u8; 5] = [0, 0, 0, 0, 0];
 
@@ -100,6 +103,7 @@ impl HuffmanCodeMap {
             heap.push(Node::merge(left_chill, right_chill));
         }
 
+
         let map = FxHashMap::default();
         let mut code = HuffmanCodeMap { 0: map };
         generate_codes(&heap.pop().unwrap(), BitVec::new(), &mut code);
@@ -118,11 +122,14 @@ impl HuffmanCodeMap {
     /// return error if there is a char in the String which is not present in the code map
     pub fn encode<R: io::Read, W: io::Write>(&self, input: R, mut output: W) -> anyhow::Result<()> {
         let mut buffer: BitVec = BitVec::new();
-        let iter = input.bytes()
-            .map(|result| -> anyhow::Result<u8>  { anyhow::Result::Ok(result?) });
+        let iter= input
+            .bytes()
+            .map(|result| { try { result?} });
+
 
         for ch in CharsOrRaws::new(iter) {
-            self.encode_char(ch?, &mut buffer)?;
+            let ch_cache = ch?;
+            self.encode_char(ch_cache, &mut buffer)?;
 
             if buffer.len() >= 64 {
                 flush_buffer(&mut buffer, &mut output)?;
@@ -132,7 +139,6 @@ impl HuffmanCodeMap {
 
         let vec: Vec<u8> = buffer.into_vec();
         output.write_all(&vec)?;
-
 
         Result::Ok(())
     }
@@ -148,12 +154,12 @@ impl HuffmanCodeMap {
     }
 
     fn encode_char(&self, ch: CharOrRaw, buffer: &mut BitVec) -> anyhow::Result<()> {
-        let slice = self.get_char_code(ch).context("invalid data")?;
+        let slice = self.get_char_code(ch.clone())
+                                    .context("invalid data")?;
+
         buffer.extend_from_bitslice(slice);
         Ok(())
     }
-
-
 
     ///decode the string which was encoded with the code map.
     /// if you use the wrong HuffmanCodeMap to decode it will return a incorrect string
@@ -183,6 +189,13 @@ impl HuffmanCodeMap {
                 char_cache.clear();
             }
         }
+        let mut iter = map.0.into_iter();
+        /*while let Some(i) = iter.next() {
+            eprintln!("box {:?}, ch {:?}", i.0, i.1);
+        }*/
+        drop(iter);
+
+        drop(output);
         io::Result::Ok(())
     }
     /*
@@ -207,7 +220,7 @@ fn flush_buffer<W: io::Write>(buffer: &mut BitVec, mut output: W) -> io::Result<
 }
 
 fn generate_codes(node: &Node, prefix: BitVec, out_codes: &mut HuffmanCodeMap) {
-    match &node.kind {
+    return match &node.kind {
         NodeKind::Internal(ref left_child, ref right_child) => {
             let mut left_prefix = prefix.clone();
             left_prefix.push(false);
@@ -243,18 +256,21 @@ impl Node {
 }
 
 mod test {
-    use super::HuffmanCodeMap;
     use super::CharOrRaw;
-    use super::{BitBox, BitVec};
+    use super::HuffmanCodeMap;
     use super::END_OF_FILE;
+    use super::{BitBox, BitVec};
 
     use std::collections::hash_map::HashMap;
-
-    use std::fs;
-    use std::io::BufReader;
-    use std::io::stdout;
-    use std::io::Read;
+    use std::iter;
     use rustc_hash::FxHashMap;
+    use std::fs;
+    use std::io::{stdout, Repeat};
+    use std::io::BufReader;
+    use std::io::Read;
+    use std::thread;
+    use std::iter::{Map, Once};
+
 
     #[test]
     fn encode_test() {
@@ -271,7 +287,6 @@ mod test {
             CharOrRaw::Raw(Box::new(END_OF_FILE)),
             BitBox::from_box(eof_slice, 1),
         );
-
 
         let huff = HuffmanCodeMap(hash_map);
 
@@ -295,40 +310,70 @@ mod test {
         hash_map.insert(CharOrRaw::Char('a'), BitBox::from_box(a_slice, 2));
         hash_map.insert(CharOrRaw::Char('b'), BitBox::from_box(b_slice, 2));
 
-        hash_map.insert(CharOrRaw::Raw(Box::new(END_OF_FILE)), BitBox::from_box(eof_slice, 1));
-
+        hash_map.insert(
+            CharOrRaw::Raw(Box::new(END_OF_FILE)),
+            BitBox::from_box(eof_slice, 1),
+        );
 
         let huff = HuffmanCodeMap(hash_map);
 
         let buffer = [0b01_00_10_00]; // "ab"
         let mut output_buf = vec![];
-        let bitvec = BitVec::from_vec(buffer.to_vec(), 8);
-
+        let bitvec = BitVec::from_vec(buffer.to_vec());
 
         huff.decode(buffer.as_ref(), &mut output_buf).unwrap();
 
         assert_eq!(output_buf, "ab".as_bytes())
     }
 
-    /*
+
     #[test]
     fn html() {
         let mut encoded_data = vec![];
         let mut output_buffer = vec![];
-        let mut buffer = "aaaabbccc".as_bytes();
-        let iter = buffer.iter().map(|e| {anyhow::Result::Ok(e)});
+        //let mut buffer: Vec<u8> = "bbbbbbbbbbbbbbbbbbbbbbbddddddduuV<>ddddddddddddd".as_bytes().to_vec();
+        let mut buffer: Vec<u8> = "b".as_bytes().iter().cycle().take(23)
+                                        .chain("d".as_bytes().iter().cycle().take(7))
+                                        .chain("u".as_bytes().iter().cycle().take(2))
+                                        .chain("V".as_bytes().iter())
+                                        .chain("<".as_bytes().iter())
+                                        .chain(">".as_bytes().iter())
+                                        .chain("d".as_bytes().iter().cycle().take(13))
+                                        .map(|e| *e)
+                                        .collect();
 
+        let iter = buffer.iter().map(|e| {anyhow::Result::Ok(*e)});
 
         let map = HuffmanCodeMap::new(iter).unwrap();
-        let str = format!("{:?}", map);
 
-        map.encode(buffer, &mut encoded_data).unwrap();
+        map.encode(buffer.as_slice(), &mut encoded_data).unwrap();
+        println!("encoded_data len {}", encoded_data.len());
+
+        let test_iter: Vec<bool> = [true].iter().cycle().take(23 * 1) //b
+            .chain([false, false].iter().cycle().take(7 * 2)) //d
+            .chain([false, true, false, true].iter().cycle().take(2 * 4)) //u
+            .chain([false, true, false, false, false].iter()) //V
+            .chain([false, true, false, false, true].iter()) //<
+            .chain([false, true, true, false].iter()) //>
+            .chain([false, false].iter().cycle().take(13 * 2))//d
+            .chain([false, true, true, true].iter()) //end
+            .map(|e| *e).collect();
+
+        let mut bitvec = BitVec::new();
+
+        for bit in test_iter.into_iter() {
+            bitvec.push(bit)
+        }
+
+        let test_buffer = bitvec.into_vec();
+
+        assert_eq!(encoded_data, test_buffer, "encoded data");
         map.decode(encoded_data.as_slice(), &mut output_buffer).unwrap();
 
-        assert_eq!(output_buffer, buffer);
-    }*/
+        assert_eq!(output_buffer, buffer, "end_resault");
+    }
 
-    /*
+
     #[test]
     fn invalid_utf8() {
         let mut file = fs::File::open("invalid_utf8_data").unwrap();
@@ -338,38 +383,35 @@ mod test {
 
         file.read_to_end(&mut buffer).unwrap();
 
-        let map = HuffmanCodeMap::new((&buffer).bytes()).unwrap();
+        let iter = buffer.bytes().map(|e| try { e? });
+
+        let map = HuffmanCodeMap::new(iter).unwrap();
 
         map.encode(buffer.as_slice(), &mut encoded_data).unwrap();
 
         map.decode(encoded_data.as_slice(), &mut output_buffer).unwrap();
 
         assert_eq!(output_buffer, buffer);
-    }*/
+    }
 
 
-    /*
     #[test]
     fn name() {
         let str = "ab";
         let buffer = BufReader::new(str.as_bytes());
         let mut mid_buffer = vec![];
         let mut out_buffer = vec![];
+        let iter = buffer.bytes().map(|results| {
+            Ok(results?)
+        });
 
-        let map = HuffmanCodeMap::new(buffer.bytes()).unwrap();
+        let map = HuffmanCodeMap::new(iter).unwrap();
 
         let buffer = BufReader::new(str.as_bytes());
 
         map.encode(buffer, &mut mid_buffer).unwrap();
 
         map.decode(mid_buffer.as_slice(), &mut out_buffer).unwrap();
-        assert_eq!(str.as_bytes().to_vec(), out_buffer);
-    }*/
-
-    /*
-    #[test]
-    #[should_panic]
-    fn zero_size_string_for_huffman_code_map() {
-        HuffmanCodeMap::new([].iter());
-    }*/
+        assert_eq!(out_buffer, str.as_bytes().to_vec());
+    }
 }

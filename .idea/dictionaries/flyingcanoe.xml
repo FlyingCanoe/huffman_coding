@@ -3,6 +3,7 @@
     <words>
       <w>bincode</w>
       <w>bitbox</w>
+      <w>bitslice</w>
       <w>bitvec</w>
     </words>
   </dictionary>

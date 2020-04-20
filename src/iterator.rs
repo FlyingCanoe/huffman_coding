@@ -1,9 +1,8 @@
+use super::bitvec::BitSliceRef;
 use core::char;
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::{fmt::Debug, iter::Iterator};
-use super::bitvec1::{BitSliceRef};
-
 
 pub struct BitIter<'a> {
     index: usize,
@@ -11,11 +10,8 @@ pub struct BitIter<'a> {
 }
 
 impl<'a> BitIter<'a> {
-    pub(crate) fn new(slice: BitSliceRef) -> BitIter {
-        BitIter {
-            index: 0,
-            slice,
-        }
+    pub(crate) fn new(slice: BitSliceRef<'a>) -> BitIter {
+        BitIter { index: 0, slice }
     }
 }
 
@@ -23,7 +19,6 @@ impl<'a> Iterator for BitIter<'a> {
     type Item = bool;
 
     fn next(&mut self) -> Option<Self::Item> {
-
         if self.slice.len() > self.index {
             let resault = self.slice.get(self.index);
             debug_assert!(resault.is_some());
@@ -40,7 +35,7 @@ pub struct Bits<I: Iterator<Item = io::Result<u8>>> {
     base: I,
     byte: u8,
     index: u8,
-    first_take: bool
+    first_take: bool,
 }
 
 impl<I: Iterator<Item = io::Result<u8>>> Bits<I> {
@@ -62,11 +57,9 @@ impl<I: Iterator<Item = io::Result<u8>>> Iterator for Bits<I> {
     fn next(&mut self) -> Option<io::Result<bool>> {
         if self.first_take {
             self.byte = match self.base.next() {
-                Some(value) => {
-                    match value {
-                        Ok(value) => value,
-                        Err(error) => return Some(Result::Err(error))
-                    }
+                Some(value) => match value {
+                    Ok(value) => value,
+                    Err(error) => return Some(Result::Err(error)),
                 },
                 None => return None,
             };
@@ -83,7 +76,7 @@ impl<I: Iterator<Item = io::Result<u8>>> Iterator for Bits<I> {
                 },
                 None => {
                     return None;
-                },
+                }
             };
             self.index = 1;
             let bit = get_bit_at(self.byte, 0);
@@ -236,7 +229,9 @@ where
     chache.push(match iter.next() {
         None => return None,
         Some(b) => match b {
-            Result::Ok(b) if b <= 0x7F => return Some(anyhow::Result::Ok(CharOrRaw::Char(b as char))),
+            Result::Ok(b) if b <= 0x7F => {
+                return Some(anyhow::Result::Ok(CharOrRaw::Char(b as char)))
+            }
             Result::Ok(b) => b,
             Result::Err(err) => return Some(anyhow::Result::Err(err)),
         },
@@ -257,7 +252,9 @@ where
                     return Some(anyhow::Result::Ok(CharOrRaw::Char(ch)));
                 } else if state == REJECT {
                     // At this point, we always want to advance at least one byte.
-                    return Some(anyhow::Result::Ok(CharOrRaw::Raw(chache.into_boxed_slice())));
+                    return Some(anyhow::Result::Ok(CharOrRaw::Raw(
+                        chache.into_boxed_slice(),
+                    )));
                 }
             }
             Result::Err(error) => return Some(anyhow::Result::Err(error)),
@@ -278,11 +275,12 @@ pub fn decode_step(state: &mut usize, cp: &mut u32, b: u8) {
 }
 
 mod test {
+    use super::get_bit_at;
     use super::BitSliceRef;
     use super::Bits;
-    use super::get_bit_at;
 
     use std::io::{BufReader, Read, Result};
+
 
     #[test]
     fn bit_in_21() {
@@ -290,7 +288,10 @@ mod test {
         let buf = num.as_slice();
         let boolvec: Result<Vec<bool>> = Bits::new(buf.bytes()).collect();
 
-        assert_eq!(boolvec.unwrap(), vec![false, false, false, true, false, true, false, true]);
+        assert_eq!(
+            boolvec.unwrap(),
+            vec![false, false, false, true, false, true, false, true]
+        );
     }
 
     #[test]
@@ -300,8 +301,11 @@ mod test {
         for pos in 0..8 {
             boolvec.push(get_bit_at(num, pos));
         }
-        
-        assert_eq!(boolvec, vec![false, true, false, false, true, false, false, false])
+
+        assert_eq!(
+            boolvec,
+            vec![false, true, false, false, true, false, false, false]
+        )
     }
 
     #[test]

@@ -12,8 +12,9 @@ use std::slice;
 
 use super::iterator::BitIter;
 use std::borrow::Borrow;
+use std::hash::{Hash, Hasher};
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct BitSliceRef<'a> {
     len: usize,
     slice: &'a [u8],
@@ -21,6 +22,7 @@ pub struct BitSliceRef<'a> {
 
 impl<'a> BitSliceRef<'a> {
     pub fn from_slice(slice: &'a [u8], len: usize) -> Self {
+        assert!(slice.len() >= len / 8);
         BitSliceRef { len, slice }
     }
 
@@ -29,10 +31,8 @@ impl<'a> BitSliceRef<'a> {
     }
 
     pub fn into_bitbox(self) -> BitBox {
-        BitBox {
-            len: self.len,
-            raw_box: self.slice.into(),
-        }
+        let temp_box = self.slice.into();
+        BitBox::from_box(temp_box, self.len)
     }
 
     pub fn get(&self, index: usize) -> Option<bool> {
@@ -54,33 +54,41 @@ impl<'a> BitSliceRef<'a> {
     }
 }
 
-#[derive(Clone)]
 pub struct BitBox {
     len: usize,
-    raw_box: Unique<[u8]>,
+    ptr: Unique<u8>,
 }
 
 impl BitBox {
-    pub fn from_box(byte_box: Box<[u8]>, len: usize) -> Self {
+    pub fn from_box(mut byte_box: Box<[u8]>, len: usize) -> Self {
         BitBox {
             len,
-            raw_box: byte_box,
+            ptr: Unique::new(Box::into_raw(byte_box) as *mut u8).unwrap(),
         }
     }
 
     pub fn as_bitslice(&self) -> BitSliceRef {
         BitSliceRef {
             len: self.len,
-            slice: self.raw_box.as_ref(),
+            slice: unsafe { slice::from_raw_parts(self.ptr.as_ptr(), self.byte_len()) },
+        }
+    }
+
+    fn byte_len(&self) -> usize {
+        if self.len % 8 == 0 {
+            self.len / 8
+        }
+        else {
+            self.len / 8 + 1
         }
     }
 }
 
-#[derive(Clone)]
+//#[derive(Clone)]
 pub struct BitVec {
-    ptr: Unique<u8>,
     len: usize,
     cap: usize,
+    ptr: Unique<u8>,
 }
 
 impl BitVec {
@@ -97,8 +105,8 @@ impl BitVec {
                 // usize / 8 byte.
                 let new_num_bytes = old_num_bytes * 2;
                 let ptr = realloc(
-                    self.ptr.as_ptr() as *mut _,
-                    Layout::array::<u8>(self.cap / 8).unwrap(),
+                    self.ptr.as_ptr(),
+                    Layout::array::<u8>(new_num_bytes).unwrap(),
                     new_num_bytes,
                 );
                 (new_cap, ptr)
@@ -109,7 +117,7 @@ impl BitVec {
                 handle_alloc_error(Layout::array::<u8>(self.byte_cap()).unwrap());
             }
 
-            self.ptr = Unique::new(ptr as *mut _).unwrap();
+            self.ptr = Unique::new(ptr).unwrap();
             self.cap = new_cap;
         }
     }
@@ -132,10 +140,29 @@ impl BitVec {
         return results
     }
 
+    fn pop_byte(&mut self) -> Option<u8> {
+        let byte_len = self.byte_len();
+        if byte_len == 0 {
+            return None
+        }
+
+        let byte = unsafe { self.ptr.as_ptr().offset((byte_len - 1) as isize).read() };
+        let num = self.bit_in_last_byte();
+
+        if num == 0 {
+            self.len -= 8;
+        }
+        else {
+            self.len -= num as usize;
+        }
+        Some(byte)
+    }
+
     pub fn push(&mut self, value: bool) {
         if self.len == self.cap {
             self.grow()
         }
+
 
         // check if all byte are full
         if self.len % 8 == 0 {
@@ -159,7 +186,12 @@ impl BitVec {
         self.len += 1;
     }
 
+    fn push_byte(&mut self, byte: u8) {
+
+    }
+
     fn get(&self, index: usize) -> Option<bool> {
+
         if self.len > index {
             let byte_index = index / 8;
             let bit_index = index % 8;
@@ -171,15 +203,12 @@ impl BitVec {
         None
     }
 
+
     pub fn as_bitslice(&self) -> BitSliceRef {
         BitSliceRef {
             len: self.len,
             slice: unsafe { slice::from_raw_parts(self.ptr.as_ptr(), self.byte_len()) },
         }
-        /*BitSliceRef {
-            len: self.len,
-            slice: self.ptr.as_slice(),
-        }*/
     }
 
     pub fn extend_from_bitslice(&mut self, slice: BitSliceRef) {
@@ -192,11 +221,16 @@ impl BitVec {
     /// #Panic
     /// a bitvec can only hold usize::MAX bit. If you give this function a vec<u8> with more than
     /// usize:max / 8 element it will panic
-    pub fn from_vec(mut vec: Vec<u8>) -> Self {
+    pub fn from_vec(vec: Vec<u8>) -> Self {
+        let (ptr ,mut len, mut cap) = vec.into_raw_parts();
+        len = len.checked_mul(8).unwrap();
+        cap = cap.checked_mul(8).unwrap();
+        let ptr = Unique::new(ptr).unwrap();
+
         BitVec {
-            len: vec.len().checked_mul(8).unwrap(),
-            cap: vec.capacity().checked_mul(8).unwrap(),
-            ptr: Unique::new(vec.as_mut_ptr()).unwrap(),
+            len,
+            cap,
+            ptr,
         }
     }
 
@@ -210,20 +244,24 @@ impl BitVec {
 
     pub fn into_vec(self) -> Vec<u8> {
         unsafe {
-            return Vec::from_raw_parts(
+            let vec = Vec::from_raw_parts(
                 self.ptr.as_ptr(),
                 self.byte_len(),
                 self.byte_cap(),
-            )
+            );
+            mem::forget(self);
+            vec
         }
     }
 
     pub fn into_bitbox(self) -> BitBox {
-        todo!()
-        /*BitBox {
+        let r = BitBox {
             len: self.len,
-            raw_box: self.ptr.into_boxed_slice(),
-        }*/
+            ptr: Unique::new(self.ptr.as_ptr()).unwrap(),
+        };
+
+        mem::forget(self);
+        r
     }
 
     pub fn len(&self) -> usize {
@@ -239,30 +277,23 @@ impl BitVec {
     }
 
     pub fn get_full_bytes(&mut self) -> Vec<u8> {
-        todo!()
-        /*let num = self.bit_in_last_byte();
-        // We only assing a value to plasse the barrow checker.
-        let mut remining = 0;
+        let num = self.bit_in_last_byte();
+        //let mut reminige;
 
-        // If the last bit is not full (the nomber of bit in the
-        // BitVec is not equel to mutipole of 8), we extract it.
-        if num != 0 {
-            remining = self.ptr.pop().unwrap();
+        if num == 0 {
+            let output_vec = self.clone().into_vec();
+            self.clear();
+            output_vec
         }
-
-        // A vec of all full byte.
-        let copy = self.ptr.clone();
-        self.ptr.clear();
-
-        if num != 0 {
-            // We reinsert the remining bit and set the len to the right value.
-            self.ptr.push(remining);
+        else {
+            let byte = self.pop_byte().unwrap();
+            let output_vec = self.clone().into_vec();
+            self.clear(); unsafe {
+                *self.ptr.as_mut() = byte;
+            }
             self.len = num as usize;
-        } else {
-            self.len = 0;
+            output_vec
         }
-
-        copy*/
     }
 
     /// return the number of bytes the BitVec is using
@@ -285,26 +316,54 @@ impl BitVec {
     }
 }
 
-impl<'a> PartialEq<BitSliceRef<'a>> for BitSliceRef<'a> {
-    fn eq(&self, other: &BitSliceRef) -> bool {
-        if self.len == other.len {
-            if *self.slice == *other.slice {
-                return true;
-            }
-        }
-        return false;
-    }
-}
-
 impl<'a> PartialEq<BitSliceRef<'a>> for BitBox {
     fn eq(&self, other: &BitSliceRef) -> bool {
-        self.deref() == other
+        self.as_bitslice() == *other
     }
 }
 
-impl<'a> PartialEq<BitSliceRef<<'a>> for BitBox {
-    fn eq(&self, other: BitBox) -> bool {
-        self.eq(other.as_bitslice())
+impl PartialEq<BitBox> for BitBox {
+    fn eq(&self, other: &BitBox) -> bool {
+        self.eq(&other.as_bitslice())
+    }
+}
+
+impl Eq for BitBox {}
+
+impl Clone for BitVec {
+    fn clone(&self) -> Self {
+        unsafe {
+            if self.len != 0 {
+                let ptr = alloc(Layout::array::<u8>(self.byte_cap()).unwrap());
+                ptr::copy_nonoverlapping(self.ptr.as_ptr(), ptr, self.byte_len());
+                BitVec {
+                    len: self.len,
+                    cap: self.cap,
+                    ptr: Unique::new(ptr).unwrap(),
+                }
+            }
+            else {
+                BitVec::new()
+            }
+        }
+    }
+}
+
+impl Clone for BitBox {
+    fn clone(&self) -> Self {
+        unsafe {
+            if self.len != 0 {
+                let ptr = alloc(Layout::array::<u8>(self.byte_len()).unwrap());
+                ptr::copy_nonoverlapping(self.ptr.as_ptr(), ptr, self.byte_len());
+                BitBox {
+                    len: self.len,
+                    ptr: Unique::new(ptr).unwrap(),
+                }
+            }
+            else {
+                panic!()
+            }
+        }
     }
 }
 
@@ -334,12 +393,35 @@ impl Debug for BitVec {
     }
 }
 
+impl Hash for BitBox {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.as_bitslice().hash(state)
+    }
+}
+
+impl Drop for BitBox {
+    fn drop(&mut self) {
+        let num_bytes = self.byte_len();
+
+        if num_bytes != 0 {
+            unsafe {
+                dealloc(self.ptr.as_ptr(), Layout::array::<u8>(num_bytes).unwrap())
+            }
+        }
+    }
+}
+
 impl Drop for BitVec {
     fn drop(&mut self) {
         let num_bytes = self.byte_cap();
+        assert_eq!(1, mem::align_of::<u8>());
+        assert_eq!(1, mem::size_of::<u8>());
 
-        unsafe {
-            dealloc(self.ptr.as_ptr(), Layout::array::<u8>(self.byte_cap()).unwrap())
+        if num_bytes != 0 {
+            //while let Some(_) = self.pop() { }
+            unsafe {
+                dealloc(self.ptr.as_ptr(), Layout::array::<u8>(self.byte_cap()).unwrap())
+            }
         }
     }
 }
@@ -363,23 +445,26 @@ fn get_bit_at(input: u8, pos: u8) -> bool {
 mod test {
     use super::BitVec;
     use std::ptr::Unique;
-    use crate::bitvec1::get_bit_at;
+    use crate::bitvec::get_bit_at;
+    use std::ptr::NonNull;
+
+    struct foo {
+        len: usize,
+        cap: usize,
+        ptr: Unique<u8>,
+    }
 
     #[test]
     fn pop_empty_bitvec() {
         let mut vec = BitVec::new();
-
         assert_eq!(vec.pop(), None);
     }
 
     #[test]
     fn pop_bitvec() {
-        let mut slice = [64];
-        let mut vec = BitVec {
-            len: 2,
-            cap: 8,
-            ptr: Unique::new(&mut slice[0]).unwrap(),
-        };
+        let mut vec = BitVec::new();
+        vec.push(false);
+        vec.push(true);
 
         assert_eq!(vec.pop(), Some(true));
         assert_eq!(vec.pop(), Some(false));
@@ -403,17 +488,6 @@ mod test {
         assert_eq!(vec.cap, 32);
     }
 
-    #[should_panic]
-    #[test]
-    fn grow_bitvec_to_far() {
-        let mut vec = BitVec {
-            ptr: Unique::empty(),
-            len: 0,
-            cap: usize::MAX
-        };
-
-        vec.grow()
-    }
 
     #[test]
     fn grow_bitvec_empty()  {

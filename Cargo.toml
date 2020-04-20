@@ -10,14 +10,13 @@ edition = "2018"
 opt-level = 3
 
 [[bin]]
-name="perf"
-path="examples/perf.rs"
+name = "perf"
+path = "examples/perf.rs"
 
 
 [dependencies]
 rustc-hash = "1.1.0"
 bincode = "1.2.1"
 anyhow = "1.0.28"
-bitvec = {version = "0.17.1", features = ["serde"]}
 serde = {version = "1.0.63", features = ["derive"]}
 unicode-normalization = "0.1.12"
