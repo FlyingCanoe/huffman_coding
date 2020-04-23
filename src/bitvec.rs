@@ -30,6 +30,10 @@ impl<'a> BitSliceRef<'a> {
         self.len
     }
 
+    fn to_box(self) -> Box<[u8]> {
+        self.slice.into()
+    }
+
     pub fn into_bitbox(self) -> BitBox {
         let temp_box = self.slice.into();
         BitBox::from_box(temp_box, self.len)
@@ -59,7 +63,26 @@ pub struct BitBox {
     ptr: Unique<u8>,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+pub struct BadBitBox {
+    len: usize,
+    ptr: Box<[u8]>
+}
+
+impl BadBitBox {
+    pub(crate) fn into_bit_box(self) -> BitBox {
+        BitBox::from_box(self.ptr, self.len)
+    }
+}
+
 impl BitBox {
+    pub(crate) fn into_bad_bit_box(self) -> BadBitBox {
+        BadBitBox {
+            len: self.len,
+            ptr: self.as_bitslice().to_box()
+        }
+    }
+
     pub fn from_box(mut byte_box: Box<[u8]>, len: usize) -> Self {
         BitBox {
             len,

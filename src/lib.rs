@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::io;
 
 pub mod bitvec;
-use bitvec::{BitBox, BitSliceRef, BitVec};
+use bitvec::{BitBox, BitSliceRef, BitVec, BadBitBox};
 
 mod iterator;
 use iterator::{Bits, CharOrRaw, CharsOrRaws};
@@ -198,18 +198,28 @@ impl HuffmanCodeMap {
         drop(output);
         io::Result::Ok(())
     }
-    /*
+    
     ///serialize the given HuffmanCodeMap into a Vec<u8> using bincode
-    pub fn serialize(&self) -> Result<Vec<u8>, Box<bincode::ErrorKind>> {
-        bincode::serialize(self)
-    }*/
+    pub fn serialize(self) -> Result<Vec<u8>, Box<bincode::ErrorKind>> {
+        let mut output = FxHashMap::default();
+        for pair in self.0.into_iter() {
+            let bad_bit_box = pair.1.into_bad_bit_box();
+            output.insert(pair.0, bad_bit_box);
+        }
+        bincode::serialize(&output)
+    }
 
-    /*
+    
     ///deserialize a slice of u8 into a HuffmanCodeMap.
     ///it should have bean serialize with bincode otherwise it will yield a error
     pub fn deserialize(binary_stream: &[u8]) -> Result<HuffmanCodeMap, Box<bincode::ErrorKind>> {
-        bincode::deserialize(binary_stream)
-    }*/
+        let map: FxHashMap<CharOrRaw, BadBitBox> = bincode::deserialize(binary_stream)?;
+        let mut huffmap = FxHashMap::default();
+        for (ch, bitbox) in map.into_iter() {
+            huffmap.insert(ch, bitbox.into_bit_box());
+        }
+        Ok(HuffmanCodeMap(huffmap))
+    }
 }
 
 fn flush_buffer<W: io::Write>(buffer: &mut BitVec, mut output: W) -> io::Result<()> {

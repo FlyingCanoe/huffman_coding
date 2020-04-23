@@ -190,7 +190,7 @@ const STATES_FORWARD: &'static [u8] = &[
   0, 36, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 ];
 
-#[derive(Hash, PartialEq, Eq, Ord, PartialOrd, Clone, Debug, Serialize)]
+#[derive(Hash, PartialEq, Eq, Ord, PartialOrd, Clone, Debug, Serialize, Deserialize)]
 ///a char or 1-3 bytes of invalid ut8.
 ///This is yielded by the `charsOrRaws` iterator which can be created via the ByteSlice::utf8_chunks method.
 ///The 'a lifetime parameter corresponds to the lifetime of the bytes that are being iterated over.
