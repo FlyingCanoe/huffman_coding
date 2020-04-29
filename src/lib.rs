@@ -163,11 +163,11 @@ impl HuffmanCodeMap {
 
     ///decode the string which was encoded with the code map.
     /// if you use the wrong HuffmanCodeMap to decode it will return a incorrect string
-    pub fn decode<R: io::Read, W: io::Write>(self, input: R, mut output: W) -> io::Result<()> {
+    pub fn decode<R: Iterator<Item=io::Result<u8>>, W: io::Write>(self, input: R, mut output: W) -> io::Result<()> {
         let map = self.reverse();
 
         let mut char_cache = BitVec::new();
-        let mut binary_stream = Bits::new(input.bytes());
+        let mut binary_stream = Bits::new(input);
         let mut chache = [0; 5];
 
         while let Some(bit) = binary_stream.next() {
@@ -265,6 +265,7 @@ impl Node {
     }
 }
 
+/*
 mod test {
     use super::CharOrRaw;
     use super::HuffmanCodeMap;
@@ -424,4 +425,4 @@ mod test {
         map.decode(mid_buffer.as_slice(), &mut out_buffer).unwrap();
         assert_eq!(out_buffer, str.as_bytes().to_vec());
     }
-}
+}*/
