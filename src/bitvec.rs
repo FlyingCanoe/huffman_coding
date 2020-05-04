@@ -147,7 +147,7 @@ impl BitVec {
 
     pub fn new() -> BitVec {
         BitVec {
-            ptr: Unique::empty(),
+            ptr: Unique::dangling(),
             len: 0,
             cap: 0,
         }
